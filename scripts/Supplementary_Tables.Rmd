@@ -1,0 +1,220 @@
+---
+title: "Supplementary Tables for Examining the Role of Extrachromosomal DNA in 1,216 Lung Cancers"
+output: html_notebook
+---
+
+```{r SUPP. TABLE 1 & 2-- SUPPLEMENTARY TABLE FOR RECURRENT ECDNA ONCOGENES}
+
+# Load required libraries
+library(tidyverse)
+library(stringr)
+
+amplicons <- read.csv("../data/ecDNA-amplicons-table.tsv", sep="\t", header=TRUE)
+
+categories <- read.csv("../data/ecDNA_genomic_categories2.csv", sep="\t", header=TRUE)
+
+merged <- merge(categories, amplicons, by = "Feature_ID")
+
+#remove Tumor_Barcode.x column and rename Tumor_Barcode.y to Tumor_Barcode
+merged <- merged %>%
+  dplyr::select(-Tumor_Barcode.x, Classification) %>%
+  dplyr::rename(Tumor_Barcode = Tumor_Barcode.y)
+
+# Using your data frame named 'merged'
+# First, extract all unique categories across all rows
+all_categories <- unique(unlist(lapply(merged$Category, function(x) {
+  if (x == "[]") return(character(0))
+  str_extract_all(x, "'([^']+)'") %>% 
+    unlist() %>% 
+    str_replace_all("'", "")
+})))
+
+# Create new columns for each unique category
+for (cat in all_categories) {
+  # Check if the Category contains the specific category and mark Yes/No
+  merged[[cat]] <- ifelse(str_detect(merged$Category, fixed(paste0("'", cat, "'"))), "Yes", "No")
+}
+
+#remove the previous Category column and make the location column last 
+merged <- merged %>%
+  dplyr::select(-Category) %>%
+  dplyr::select(Tumor_Barcode, Classification, all_of(all_categories), Location)
+
+#Separate into nonsmokers and smokers
+metadata = read.csv("../data/log-reg-table5.tsv", sep = '\t', header=TRUE)
+metadata <- metadata %>% dplyr::select(Tumor_Barcode, Smoking, Chromothripsis, ecDNA_status, Annotation)
+#filter for ecDNA positive samples
+metadata <- metadata %>% filter(ecDNA_status == 1)
+
+#change chromothripsis column to Yes/No
+metadata$Chromothripsis <- ifelse(metadata$Chromothripsis == 1, "Yes", "No")
+
+#make new column called "Chromothripsis overlaps ecDNA" and mark Yes/No if th Annotation column is ecDNA, chromothripsis
+
+
+nonsmoker_table <- merged %>% inner_join(metadata, by = c("Tumor_Barcode")) %>% filter(Smoking == "Non-Smoker")
+smoker_table <- merged %>% inner_join(metadata, by = c("Tumor_Barcode")) %>% filter(Smoking == "Smoker")
+
+#remove ecDNA_status and smoking column and make the Location column the last column
+nonsmoker_table <- nonsmoker_table %>% dplyr::select(-ecDNA_status, -Smoking)
+smoker_table <- smoker_table %>% dplyr::select(-ecDNA_status, -Smoking)
+
+#make location column the last column 
+nonsmoker_table <- nonsmoker_table %>% dplyr::select(Tumor_Barcode, Classification, Chromothripsis, all_of(all_categories), Location)
+smoker_table <- smoker_table %>% dplyr::select(Tumor_Barcode, Classification, Chromothripsis, all_of(all_categories), Location)
+
+#rename "Chromothripsis" column to "Chromothripsis in sample"
+nonsmoker_table <- nonsmoker_table %>% dplyr::rename("Chromothripsis in sample" = Chromothripsis)
+smoker_table <- smoker_table %>% dplyr::rename("Chromothripsis in sample" = Chromothripsis)
+
+# Write to Excel
+# Load existing workbook
+existing_file <- "/Users/azhark/Documents/Docs/ecDNA_manuscript/Supplementary/Sherlock_Lung_ecDNA_Supplementary_Tables.xlsx"
+wb <- loadWorkbook(existing_file)
+
+# Add new sheets
+addWorksheet(wb, "Supplementary Table 1")
+addWorksheet(wb, "Supplementary Table 2")
+
+# Write data
+# Add header to Non-Smoker sheet
+headerStyle <- createStyle(textDecoration = "bold", fontSize = 14)
+writeData(wb, "Supplementary Table 1", "Supplementary Table 1. Co-occurrence of ecDNA genetic cargo in never-smokers", 
+          startRow = 1, startCol = 1)
+addStyle(wb, "Supplementary Table 1", headerStyle, rows = 1, cols = 1)
+
+# Add header to Smoker sheet
+writeData(wb, "Supplementary Table 2", "Supplementary Table 2. Co-occurrence of ecDNA genetic cargo in smokers", 
+          startRow = 1, startCol = 1)
+addStyle(wb, "Supplementary Table 2", headerStyle, rows = 1, cols = 1)
+
+# Add a row gap after the header
+writeData(wb, "Supplementary Table 1", nonsmoker_table, startRow = 3, startCol = 1, rowNames = FALSE)
+writeData(wb, "Supplementary Table 2", smoker_table, startRow = 3, startCol = 1, rowNames = FALSE)
+
+saveWorkbook(wb, existing_file, overwrite = TRUE)
+
+```
+
+
+```{r SUPP. TABLE 3 & 4-- SUPPLEMENTARY TABLE FOR RECURRENT ECDNA ONCOGENES}
+
+# Read in the COSMIC gene list and identify oncogenes
+cosmic_genes <- read.csv("../data/cancerGeneList.tsv", sep="\t", header=TRUE)
+oncogenes <- cosmic_genes[cosmic_genes$Is.Oncogene == "Yes" & cosmic_genes$Is.Tumor.Suppressor.Gene == "No",]$Hugo.Symbol
+
+# Read and preprocess the gene data
+g <- read.csv("../data/rescaled-genes-original.tsv", sep="\t", header=TRUE)
+g$feature <- gsub("_.*", "", g$feature)
+g <- g[g$feature != "unknown",]
+
+# Read and join the metadata with smoking information
+metadata <- read.csv("../data/log-reg-table5.tsv", sep="\t", header=TRUE)
+metadata <- metadata[, c("Tumor_Barcode", "Smoking")] # Use base R subsetting instead of select
+g <- dplyr::left_join(g, metadata, by = "Tumor_Barcode")
+
+# Remove duplicates based on Tumor_Barcode and gene
+g <- g[!duplicated(g[c("Tumor_Barcode", "gene")]), ]
+
+# Classify as ecDNA or chr-Amp
+g$Classification <- ifelse(g$feature == "ecDNA", "ecDNA", "chr-Amp")
+
+# Function to calculate oncogene frequency and proportion by classification
+get_oncogene_stats <- function(data, oncogene_list, classification = NULL) {
+  # Filter by classification if specified
+  if (!is.null(classification)) {
+    data <- data %>% filter(Classification == classification)
+  }
+  
+  # Get total samples for proportion calculation
+  total_samples <- length(unique(data$Tumor_Barcode))
+  
+  # Count oncogene frequency
+  gene_counts <- data %>%
+    dplyr::filter(gene %in% oncogene_list) %>%
+    dplyr::select(Tumor_Barcode, gene) %>%
+    distinct() %>%
+    dplyr::group_by(gene) %>%
+    dplyr::summarise(
+      frequency = n(),
+      proportion = round(n() / total_samples * 100, 2)
+    ) %>%
+    dplyr::arrange(desc(frequency))
+  
+  return(gene_counts)
+}
+
+# Calculate frequency for ecDNA oncogenes
+ns <- dplyr::filter(g, Smoking=="Non-Smoker")
+s <- dplyr::filter(g, Smoking=="Smoker")
+
+nonsmoker_oncogene_stats <- get_oncogene_stats(ns, oncogenes, "ecDNA")
+smoker_oncogene_stats <- get_oncogene_stats(s, oncogenes, "ecDNA")
+
+# Filter for genes of interest
+genes_to_filter <- c("MDM2", "EGFR", "CCND1", "TERT", "NKX2-1", "MYC")
+nonsmoker_oncogene_stats <- nonsmoker_oncogene_stats %>% filter(gene %in% genes_to_filter)
+smoker_oncogene_stats <- smoker_oncogene_stats %>% filter(gene %in% genes_to_filter)
+
+# Add total cohort prevalence columns
+# For non-smokers, denominator is 871
+nonsmoker_total_prevalence <- nonsmoker_oncogene_stats %>%
+  mutate(
+    total_cohort_prevalence = round((frequency / 871) * 100, 2),
+    prevalence_label = paste0(frequency, "/871 (", total_cohort_prevalence, "%)")
+  )
+
+# For smokers, denominator is 345
+smoker_total_prevalence <- smoker_oncogene_stats %>%
+  mutate(
+    total_cohort_prevalence = round((frequency / 345) * 100, 2),
+    prevalence_label = paste0(frequency, "/345 (", total_cohort_prevalence, "%)")
+  )
+
+# Order genes by frequency in non-smokers for consistent comparison
+gene_order <- nonsmoker_total_prevalence %>%
+  arrange(desc(frequency)) %>%
+  pull(gene)
+
+nonsmoker_total_prevalence <- nonsmoker_total_prevalence %>%
+  mutate(gene = factor(gene, levels = gene_order)) %>%
+  arrange(gene)
+
+smoker_total_prevalence <- smoker_total_prevalence %>%
+  mutate(gene = factor(gene, levels = gene_order)) %>%
+  arrange(gene)
+
+#delete total_cohort_prevalence column
+nonsmoker_oncogene_stats <- nonsmoker_total_prevalence[, -4]
+smoker_oncogene_stats <- smoker_total_prevalence[, -4]
+
+# Write to Excel
+# Load existing workbook
+existing_file <- "/Users/azhark/Documents/Docs/ecDNA_manuscript/Supplementary/Sherlock_Lung_ecDNA_Supplementary_Tables.xlsx"
+wb <- loadWorkbook(existing_file)
+
+# Add new sheets
+addWorksheet(wb, "Supplementary Table 3")
+addWorksheet(wb, "Supplementary Table 4")
+
+# Write data
+# Add header to Non-Smoker sheet
+headerStyle <- createStyle(textDecoration = "bold", fontSize = 14)
+writeData(wb, "Supplementary Table 3", "Supplementary Table 3. Recurrently amplified oncogenes on ecDNA in never-smokers",
+          startRow = 1, startCol = 1)
+addStyle(wb, "Supplementary Table 3", headerStyle, rows = 1, cols = 1)
+
+# Add header to Smoker sheet
+writeData(wb, "Supplementary Table 4", "Supplementary Table 4. Recurrently amplified oncogenes on ecDNA in smokers", 
+          startRow = 1, startCol = 1)
+addStyle(wb, "Supplementary Table 4", headerStyle, rows = 1, cols = 1)
+
+# Add a row gap after the header
+writeData(wb, "Supplementary Table 3", nonsmoker_oncogene_stats, startRow = 3, startCol = 1, rowNames = FALSE)
+writeData(wb, "Supplementary Table 4", smoker_oncogene_stats, startRow = 3, startCol = 1, rowNames = FALSE)
+
+
+# Save workbook
+saveWorkbook(wb, existing_file, overwrite = TRUE)
+```
+

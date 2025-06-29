@@ -1,0 +1,17 @@
+# Data files
+data/
+metadata/
+*.tsv
+*.csv
+*.txt
+*.xlsx
+*.RData
+
+# R files
+.Rhistory
+.Ruserdata
+*.Rproj
+
+# OS files
+.DS_Store
+Thumbs.db
