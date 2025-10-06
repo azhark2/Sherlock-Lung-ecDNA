@@ -1,0 +1,4583 @@
+---
+title: "Supplementary_Figures for Examining the Role of Extrachromosomal DNA in 1,216 Lung Cancers"
+output: html_document
+date: "2025-06-20"
+---
+```{r}
+library(sjPlot)
+library(sjlabelled)
+library(sjmisc)
+library(ggplot2)
+#library(EnhancedVolcano)
+library(ggrepel)
+library(ggvenn)
+library(ggstatsplot)
+library(ggplot2)
+library(ggpubr)
+library(sjPlot)
+library(forcats)
+library(ggsignif)
+library(cowplot)
+library(patchwork)
+library(gridExtra)
+library(grid)
+library(VennDiagram)
+#library(hrbrthemes)
+library(scales)
+library(tidyr)
+library(broom)
+library(data.table)
+library(flextable)
+library(tidyverse)
+library(stringr)
+library(dplyr)
+library(ggalluvial)
+library(logistf)
+library(cowplot)
+library(openxlsx) 
+library(nlstools)
+library(survival)
+library(survminer)
+options(warn = -1) # Suppress all warnings
+```
+
+
+```{r SUPPLEMENTARY FIGURE 1 -- Sankey Diagram of clinical variables}
+
+library(dplyr)
+library(ggplot2)
+library(ggsankey)
+
+#NEVER-SMOKERS 
+
+#---------------------------
+# 1) Load & filter
+#---------------------------
+metadata = read.csv("../metadata/sherlock_1217_metadata.tsv", sep = '\t', header=TRUE)
+metadata <- metadata[metadata$Smoking != "Unknown",]
+
+countries <- read.csv('../metadata/Sherlock_country.csv', header=TRUE)
+countries$Continent[countries$Country_Group == "AS"] <- "NA/EU" 
+countries$Continent <- countries$Country_Group
+countries$Continent[countries$Country_Group == "AS" & metadata$Ancestry == "EUR"] <- "NA/EU"
+#replace 'Other' with 'Other. ' to avoid confusion with 'Other' histology for countries$Continent
+countries$Continent[countries$Country_Group == "Other"] <- "Other. "
+
+
+metadata$Ancestry = ifelse(metadata$Assigned_Population %in% 
+                             c('AFR', 'AMR or Mixed'),
+                           'Other ', metadata$Assigned_Population)
+
+
+metadata$Histology[metadata$Histology == 'Adenosquamous carcinoma'] <- "Other"
+metadata$Histology[metadata$Histology == 'Others'] <- "Other"
+metadata$Histology[metadata$Histology == 'Squamous cell carcinoma'] <- "LUSC"
+metadata$Histology[metadata$Histology == 'Adenocarcinoma'] <- "LUAD"
+metadata$Histology[metadata$Histology == 'Carcinoid tumor'] <- "Carcinoid"
+
+
+nonsmoker <- metadata[metadata$Smoking == "Non-Smoker",]
+
+nonsmoker["Passive_Smoking"][nonsmoker["Passive_Smoking"] == ''] <- "Unknown"
+nonsmoker["Passive_Smoking"][nonsmoker["Passive_Smoking"] == "No"] <- "NO"
+nonsmoker["Passive_Smoking"][nonsmoker["Passive_Smoking"] == "Yes"] <- "YES"
+
+nonsmoker$Sex <- nonsmoker$Gender
+
+#Filter for just tumor_barcode and Continent
+countries <- countries %>% dplyr::select(c("Tumor_Barcode", "Continent"))
+#merge
+nonsmoker <- merge(nonsmoker, countries, by = "Tumor_Barcode")
+
+
+#---------------------------
+# 5) Recode Stage
+#    NA or "" → "Unknown"
+#    IA|IB     → "Early Stage(I)"
+#    II|III|IV → "Late Stage(II-IV)"
+#---------------------------
+
+nonsmoker$Stage <- ifelse(
+  grepl("^(I|IA|IA1|IA2|IA3|IB)$", nonsmoker$Stage), "Early Stage(I-II)",
+  ifelse(
+    grepl("^(II|IIA|IIB|III|IIIA|IIIB|IV|IVA|IVB)$", nonsmoker$Stage), "Late Stage(III-IV)",
+    "Unknown"
+  )
+)
+
+nonsmoker$Stage[is.na(nonsmoker$Stage) | nonsmoker$Stage == ""] <- "Unknown"
+
+#---------------------------
+# 6) Recode Metastasis
+#    NA or "" → "Unknown"
+#    YES      → "Yes"
+#    NO       → "No"
+#---------------------------
+nonsmoker$Metastasis[is.na(nonsmoker$Metastasis) | nonsmoker$Metastasis == ""] <- "Unknown "
+nonsmoker$Metastasis <- ifelse(
+  toupper(nonsmoker$Metastasis) == "YES", "Yes",
+  ifelse(toupper(nonsmoker$Metastasis) == "NO",  "No", "Unknown ")
+)
+
+#Recode survival, if Survival_Month is not NA, then 'Yes', otherwise 'No'
+nonsmoker$Survival <- ifelse(!is.na(nonsmoker$Survival_Month), "Yes ", "No ")
+
+#---------------------------
+# 7) Prepare for Sankey
+#---------------------------
+nonsmoker$Sex    <- nonsmoker$Gender
+nonsmoker$Region <- nonsmoker$Continent
+
+# IMPORTANT: Put "Unknown" last for Stage & Metastasis to appear at the top
+nonsmoker <- nonsmoker %>%
+  mutate(
+    Histology  = factor(Histology,  levels = c("Other", "Carcinoid", "LUAD", "LUSC")),
+    Ancestry   = factor(Ancestry,   levels = c("EAS", "EUR", "Other ")),
+    Region     = factor(Region,     levels = c("NA/EU", "AS", "Other. ")),
+    Sex        = factor(Sex,        levels = c("Male", "Female")),
+    Stage      = factor(Stage,      levels = c("Early Stage(I-II)", "Late Stage(III-IV)", "Unknown")),
+    Metastasis = factor(Metastasis, levels = c("Yes", "No", "Unknown ")),
+    Survival   = factor(Survival,   levels = c("Yes ", "No "))
+  )
+
+#---------------------------
+# 8) Convert to long format
+#---------------------------
+nonsmoker_sankey <- nonsmoker %>%
+  make_long(Histology, Ancestry, Region, Sex, Stage, Metastasis, Survival) %>%
+  mutate(
+    node = factor(
+      node,
+      levels = c(
+        "Other", "Carcinoid", "LUAD", "LUSC",
+        "Other ", "EAS", "EUR",
+        "Other. ", "AS", "NA/EU",
+        "Female", "Male",
+        "Early Stage(I-II)", "Late Stage(III-IV)", "Unknown",
+        "Yes", "No", "Unknown ",
+        "Yes ", "No "
+      )
+    ),
+    next_node = factor(next_node, levels = levels(node))
+  )
+
+#---------------------------
+# 9) Define color scheme
+
+#---------------------------
+colors <- c(
+  "LUAD" = "red4",
+  "LUSC" = "purple",
+  "Carcinoid" = "orange",
+  "Other" = "azure4",
+  "Male" = "royalblue4",
+  "Female" = "violetred",
+  "NA/EU" = "blue",
+  "AS" = "#D5B85A",
+  "Other. " = "azure4",
+  "EUR" = "lightblue",
+  "Other " = "gray",
+  "EAS" = "yellow",
+  "Stage:Unknown" = "gray",
+  "Early Stage(I-II)" = "burlywood2",
+  "Late Stage(III-IV)" = "burlywood4",
+  "Metastasis:Unknown" = "gray80",
+  "Yes" = "lightgreen",
+  "No" = "darkgreen",
+  "Yes " = "orange2",
+  "No " = "gray"
+)
+
+
+ns <- ggplot(
+  nonsmoker_sankey,
+  aes(
+    x = x, next_x = next_x,
+    node = node, next_node = next_node,
+    fill = factor(node), label = node
+  )
+) +
+  geom_sankey(flow.alpha = 0.5, node.color = "gray30") +
+  geom_sankey_label(
+    aes(
+      x = as.numeric(x) + 0.05,
+      label = after_stat(paste0(node, "\nn = ", freq))
+    ),
+    size = 8 / .pt, color = "black", fill = "white", hjust = 0
+  ) +
+  scale_fill_manual(values = colors) +
+  theme_sankey(base_size = 16) +
+  ggtitle("Non-Smoker Cohort") +
+  theme(
+    legend.position = "none",
+    plot.title      = element_text(hjust = 0.5),
+    axis.text.x     = element_text(size = 12, face = "bold"),
+    axis.title.x    = element_blank(),
+    plot.margin     = margin(b = 40, t = 20, l = 20, r = 20)
+  ) +
+  scale_x_discrete(labels = c("Histology", "Ancestry", "Region", "Sex", "Stage", "Metastasis", "Overall\nSurvival"))
+
+#SMOKERS
+#---------------------------
+# 1) Load & filter
+#---------------------------
+metadata <- read.csv(
+  "../metadata/sherlock_1217_metadata.tsv",
+  sep = "\t", header = TRUE
+)
+metadata <- metadata[metadata$Smoking == "Smoker", ]
+
+countries <- read.csv(
+  "../metadata/country_continent.txt",
+  sep = "\t", header = TRUE
+)
+
+metadata <- merge(metadata, countries, by = "Tumor_Barcode", all.x = TRUE)
+
+#---------------------------
+# 2) Recode Histology
+#    "Adenocarcinoma"  → "LUAD"
+#    "Squamous cell carcinoma" → "LUSC"
+#    Everything else → "Other"
+#---------------------------
+metadata$Histology[metadata$Histology == "Adenocarcinoma"] <- "LUAD"
+metadata$Histology[metadata$Histology == "Squamous cell carcinoma"] <- "LUSC"
+metadata$Histology[!(metadata$Histology %in% c("LUAD", "LUSC"))] <- "Other"
+
+#---------------------------
+# 3) Recode Ancestry
+#    Lump minor groups → "Ancestry: Other"
+#---------------------------
+metadata$Ancestry <- ifelse(
+  metadata$Assigned_Population %in% c("EAS", "EUR"),
+  metadata$Assigned_Population,
+  "Other "
+)
+#---------------------------
+# 4) Recode Region
+#    TCGA + America + Europe → "NA/EU"
+#    else → "Unknown"
+#---------------------------
+metadata$Continent[grepl("TCGA", metadata$Tumor_Barcode)] <- "NA/EU"
+metadata$Continent[metadata$Continent == "America"] <- "NA/EU"
+metadata$Continent[metadata$Continent == "Europe"]  <- "NA/EU"
+metadata$Continent[is.na(metadata$Continent)]       <- "Unknown. "
+
+
+#---------------------------
+# 5) Recode Stage
+#    NA or "" → "Unknown"
+#    IA|IB     → "Early Stage(I)"
+#    II|III|IV → "Late Stage(II-IV)"
+#---------------------------
+metadata$Stage[is.na(metadata$Stage) | metadata$Stage == ""] <- "Unknown"
+
+metadata$Stage <- ifelse(
+  grepl("^IA|^IB", metadata$Stage), "Early Stage(I-II)",
+  ifelse(
+    grepl("^II|^III|^IV", metadata$Stage), "Late Stage(III-IV)",
+    "Unknown"
+  )
+)
+
+#---------------------------
+# 6) Recode Metastasis
+#    NA or "" → "Unknown"
+#    YES      → "Yes"
+#    NO       → "No"
+#---------------------------
+metadata$Metastasis[is.na(metadata$Metastasis) | metadata$Metastasis == ""] <- "Unknown "
+metadata$Metastasis <- ifelse(
+  toupper(metadata$Metastasis) == "YES", "Yes",
+  ifelse(toupper(metadata$Metastasis) == "NO",  "No", "Unknown ")
+)
+
+#Recode survival, if Survival_Month is not NA, then 'Yes', otherwise 'No'
+metadata$Survival <- ifelse(!is.na(metadata$Survival_Month), "Yes ", "No ")
+
+#---------------------------
+# 7) Prepare for Sankey
+#---------------------------
+smoker <- metadata
+smoker$Sex    <- smoker$Gender
+smoker$Region <- smoker$Continent
+
+# IMPORTANT: Put "Unknown" last for Stage & Metastasis to appear at the top
+smoker <- smoker %>%
+  mutate(
+    Histology  = factor(Histology,  levels = c("Other", "LUAD", "LUSC")),
+    Ancestry   = factor(Ancestry,   levels = c("EAS", "EUR", "Other ")),
+    Region     = factor(Region,     levels = c("NA/EU", "Unknown. ")),
+    Sex        = factor(Sex,        levels = c("Male", "Female")),
+    Stage      = factor(Stage,      levels = c("Early Stage(I-II)", "Late Stage(III-IV)", "Unknown")),
+    Metastasis = factor(Metastasis, levels = c("Yes", "No", "Unknown ")),
+    Survival   = factor(Survival,   levels = c("Yes ", "No "))
+  )
+
+#---------------------------
+# 8) Convert to long format
+#---------------------------
+smoker_sankey <- smoker %>%
+  make_long(Histology, Ancestry, Region, Sex, Stage, Metastasis, Survival) %>%
+  mutate(
+    node = factor(
+      node,
+      levels = c(
+        "Other", "LUAD", "LUSC",
+        "Other ", "EAS", "EUR",
+        "Unknown. ", "NA/EU",
+        "Female", "Male",
+        "Early Stage(I-II)", "Late Stage(III-IV)", "Unknown",
+        "Yes", "No", "Unknown ",
+        "Yes ", "No "
+      )
+    ),
+    next_node = factor(next_node, levels = levels(node))
+  )
+
+#---------------------------
+# 9) Define a NEW color scheme
+#    (Adjust hex codes to your liking)
+#---------------------------
+colors <- c(
+  "LUAD" = "red4",
+  "LUSC" = "purple",
+  "Other" = "azure4",
+  "Male" = "royalblue4",
+  "Female" = "violetred",
+  "NA/EU" = "blue",
+  "Unknown" = "azure4",
+  "EUR" = "lightblue",
+  "Other " = "gray",
+  "EAS" = "yellow",
+  "Stage:Unknown" = "gray",
+  "Early Stage(I-II)" = "burlywood2",
+  "Late Stage(III-IV)" = "burlywood4",
+  "Metastasis:Unknown" = "gray80",
+  "Yes" = "lightgreen",
+  "No" = "darkgreen",
+  "Yes " = "orange2",
+  "No " = "gray"
+)
+
+#---------------------------
+# 10) Plot the Sankey
+#---------------------------
+s <- ggplot(
+  smoker_sankey,
+  aes(
+    x = x, next_x = next_x,
+    node = node, next_node = next_node,
+    fill = factor(node), label = node
+  )
+) +
+  geom_sankey(flow.alpha = 0.5, node.color = "gray30") +
+  geom_sankey_label(
+    aes(
+      x = as.numeric(x) + 0.05,
+      label = after_stat(paste0(node, "\nn = ", freq))
+    ),
+    size = 8 / .pt, color = "black", fill = "white", hjust = 0
+  ) +
+  scale_fill_manual(values = colors) +
+  theme_sankey(base_size = 16) +
+  ggtitle("Smoker Cohort") +
+  theme(
+    legend.position = "none",
+    plot.title      = element_text(hjust = 0.5),
+    axis.text.x     = element_text(size = 12, face = "bold"),
+    axis.title.x    = element_blank(),
+    plot.margin     = margin(b = 40, t = 20, l = 20, r = 20)
+  ) +
+  scale_x_discrete(labels = c("Histology", "Ancestry", "Region", "Sex", "Stage", "Metastasis", "Overall\nSurvival"))
+
+#combine plots
+combined_plot <- ns / s
+
+#NOTE: IN THE PAPER, ONLY THE STAGE, METASTASIS, AND SURVIVAL VARIABLES ARE SHOWN BECAUSE THE OTHER VARIABLES ARE ALREADY SHOWN IN FIGURE 1.
+print(ns)
+print(s)
+
+```
+
+
+
+```{r SUPPLEMENTARY FIGURE 2D -- ONE VS ALL COUNTRY COMPARISON VOLCANO}
+
+# Define the logistic regression function
+run_logistic_regression <- function(country, country_data, smoking=TRUE) {
+  # Create "one vs all" dataset
+  country_data <- country_data %>%
+    mutate(Country_new_binary = ifelse(Country == country, country, 'Other'),
+           Country_new_binary = relevel(factor(Country_new_binary), ref = 'Other'))
+  
+  #if smoking =TRUE, correct for smoking, otherwise do not include smoking in the model
+  
+  if (smoking) {
+  # Fit the logistic regression model
+  model <- logistf(ecDNA_status ~ Country_new_binary + Gender + Tumor_Purity + Age + Ancestry + Histology + Smoking, 
+               data = country_data, firth=TRUE)
+  } else 
+    model <- logistf(ecDNA_status ~ Country_new_binary + Gender + Tumor_Purity + Age + Ancestry + Histology, 
+               data = country_data, firth=TRUE)
+    
+  # Check model fit
+  # if (summary(model)$deviance == 0) {
+  #   warning(paste("Model fitting failed for", country, "due to perfect separation"))
+  #   return(NULL)
+  # }
+  
+  # Manually extract coefficients, standard errors, and p-values
+  tidy_model <- data.frame(
+    term = names(coef(model)),               # Extract term names
+    estimate = coef(model),                  # Extract coefficients
+    std.error = sqrt(diag(vcov(model))),     # Standard errors from variance-covariance matrix
+    p.value = model$prob                     # Extract p-values (specific to logistf or similar models)
+  )
+  
+  # Calculate confidence intervals
+  conf_intervals <- confint(model)           # Extract confidence intervals
+  conf_intervals <- exp(conf_intervals)      # Exponentiate for odds ratio scale
+  
+  # Add confidence intervals to tidy_model
+  tidy_model <- tidy_model %>%
+    mutate(conf.low = conf_intervals[, 1],    # Lower CI
+           conf.high = conf_intervals[, 2])  # Upper CI
+  
+  # Calculate odds ratios
+  tidy_model <- tidy_model %>%
+    mutate(odds_ratio = exp(estimate))       # Exponentiate coefficients to get odds ratios
+  
+  # Filter for the specific 'Country_new_binary' term
+  country_term <- paste0("Country_new_binary", country)
+  tidy_model <- tidy_model %>%
+    filter(term == country_term)
+  
+  return(tidy_model)
+}
+
+
+
+#NONSMOKERS ONLY
+data <- read.csv("../data/log-reg-table5.tsv", sep="\t", header=TRUE)
+data <- data %>%
+  filter(Smoking == "Non-Smoker")  # Filter for smokers
+
+#change all "United States" to "USA"
+data$Country <- ifelse(data$Country == "United States of America", "USA", data$Country)
+# Initialize a list to store results
+results_list <- list()
+unique_countries <- na.omit(unique(data$Country))
+
+min_cases <- 1  # Minimum number of cases required for logistic regression
+
+# Iterate through each country and perform logistic regression
+for (country in unique_countries) {
+  # Check the number of cases for the country
+  country_count <- sum(data$Country == country, na.rm = TRUE)
+  
+  if (!is.na(country) && country_count > min_cases) {
+    message(paste("Processing", country, "with", country_count, "cases"))
+    model_summary <- run_logistic_regression(country, data, smoking=FALSE)
+    if (!is.null(model_summary)) {
+      model_summary$Country <- country
+      results_list[[country]] <- model_summary
+    }
+  } else {
+    message(paste("Skipping", country, "due to insufficient data (n =", country_count, ")"))
+  }
+}
+
+# Combine results into a single dataframe
+results_df <- bind_rows(results_list)
+
+# Collect p-values, odds ratios, and confidence intervals
+results_summary <- results_df %>%
+  dplyr::select(Country, term, estimate, conf.low, conf.high, odds_ratio, p.value)
+
+results_summary$fdr <- p.adjust(results_summary$p.value, method = "fdr")
+
+# Print the results
+print(results_summary)
+
+# Calculate -log10(p-value) and log2(odds_ratio) for plotting
+results_summary <- results_summary %>%
+  mutate(log_q = -log10(fdr), log_or = log2(odds_ratio))
+
+# Determine the maximum x-value for the annotation placement
+max_x <- max(results_summary$log_or) + 0.2
+x_lim <- c(-2, 2)  # Set x-axis limits
+
+
+nonsmokers <- ggplot(results_summary, aes(log_or, -log10(fdr))) +
+    geom_hline(yintercept = -log10(0.05), col = "red", linetype = 2) +
+    geom_vline(xintercept = 0, col = "gray10", linetype = 1, linewidth = 0.5) +
+    geom_point(pch = 21, size = 3.0, col = 'black', stroke = 0.2, fill = 'black') +
+    geom_text_repel(
+        aes(label = Country),
+        color = "black",
+        force = 10,  # Reduced from 20
+        box.padding = 0.5,
+        min.segment.length = 0,
+        max.overlaps = 20,  # Changed from Inf
+        size = 2.5
+    ) +
+    scale_x_continuous(limits = x_lim) +  # No pretty_breaks
+    scale_y_continuous() +  # No pretty_breaks
+    theme_bw(base_size = 12) +
+    theme(
+        panel.grid = element_blank(),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(color = "black"),
+        axis.title = element_text(color = "black", face = "bold"),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 10),
+        plot.margin = margin(t = 10, r = 10, b = 10, l = 10),
+        panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
+    ) +
+    labs(
+        x = 'log2(Odds Ratio)', 
+        y = '-log10(FDR)',
+        title = "",
+        subtitle = ""
+    ) +
+    coord_cartesian(clip = 'off')
+
+#SMOKERS ONLY
+data <- read.csv("../data/log-reg-table5.tsv/log-reg-table5.tsv", sep="\t", header=TRUE)
+data <- data %>%
+  filter(Smoking == "Smoker")  # Filter for never smokers
+# Initialize a list to store results
+results_list <- list()
+unique_countries <- na.omit(unique(data$Country))
+
+min_cases <- 1  # Minimum number of cases required for logistic regression
+
+# Iterate through each country and perform logistic regression
+for (country in unique_countries) {
+  # Check the number of cases for the country
+  country_count <- sum(data$Country == country, na.rm = TRUE)
+  
+  if (!is.na(country) && country_count > min_cases) {
+    message(paste("Processing", country, "with", country_count, "cases"))
+    model_summary <- run_logistic_regression(country, data, smoking=FALSE)
+    if (!is.null(model_summary)) {
+      model_summary$Country <- country
+      results_list[[country]] <- model_summary
+    }
+  } else {
+    message(paste("Skipping", country, "due to insufficient data (n =", country_count, ")"))
+  }
+}
+
+# Combine results into a single dataframe
+results_df <- bind_rows(results_list)
+
+# Collect p-values, odds ratios, and confidence intervals
+results_summary <- results_df %>%
+  dplyr::select(Country, term, estimate, conf.low, conf.high, odds_ratio, p.value)
+
+results_summary$fdr <- p.adjust(results_summary$p.value, method = "fdr")
+
+# Print the results
+print(results_summary)
+
+# Calculate -log10(p-value) and log2(odds_ratio) for plotting
+results_summary <- results_summary %>%
+  mutate(log_q = -log10(fdr), log_or = log2(odds_ratio))
+
+# Determine the maximum x-value for the annotation placement
+max_x <- max(results_summary$log_or) + 0.2
+x_lim <- c(-6, 6)  # Set x-axis limits
+
+
+smokers <- ggplot(results_summary, aes(log_or, -log10(fdr))) +
+    geom_hline(yintercept = -log10(0.05), col = "red", linetype = 2) +
+    geom_vline(xintercept = 0, col = "gray10", linetype = 1, linewidth = 0.5) +
+    geom_point(pch = 21, size = 3.0, col = 'black', stroke = 0.2, fill = 'black') +
+    geom_text_repel(
+        aes(label = Country),
+        color = "black",
+        force = 10,  # Reduced from 20
+        box.padding = 0.5,
+        min.segment.length = 0,
+        max.overlaps = 20,  # Changed from Inf
+        size = 2.5
+    ) +
+    scale_x_continuous(limits = x_lim) +  # No pretty_breaks
+    scale_y_continuous() +  # No pretty_breaks
+    theme_bw(base_size = 12) +
+    theme(
+        panel.grid = element_blank(),
+        axis.line = element_line(color = "black"),
+        axis.text = element_text(color = "black"),
+        axis.title = element_text(color = "black", face = "bold"),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 10),
+        plot.margin = margin(t = 10, r = 10, b = 10, l = 10),
+        panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5)
+    ) +
+    labs(
+        x = 'log2(Odds Ratio)', 
+        y = '-log10(FDR)',
+        title = "",
+        subtitle = ""
+    ) +
+    coord_cartesian(clip = 'off')
+```
+
+
+```{r SUPP FIGURE 2A & 2B}
+
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(readxl)
+library(scales)
+library(maps)
+library(sf)
+library(scatterpie)
+
+#NONSMOKERS
+ecDNA = read.delim('../data/ecDNA-annotations.txt')
+#replace NA with 0
+ecDNA$ecDNA_status[is.na(ecDNA$ecDNA_status)] <- 0
+
+countries <- read.csv('../metadata/nonsmoker-country.tsv', header=TRUE, sep = '\t')
+#make all country to USA if tumor barcode containing TCGA 
+countries$Country[grepl("TCGA", countries$Tumor_Barcode)] <- "USA"
+countries$Country[grepl("United States of America", countries$Country)] <- "USA"
+countries <- countries[,c("Tumor_Barcode", "Country")]
+
+merged <- merge(countries, ecDNA, by="Tumor_Barcode")
+
+
+# Process the merged data to get ecDNA stats
+country_stats <- merged %>%
+  group_by(Country) %>%
+  summarise(
+    n = n(),
+    ecDNA_status = sum(ecDNA_status),
+    ecDNA_status_perc = sum(ecDNA_status)/n
+  ) %>%
+  filter(!is.na(Country)) %>%  # Remove the NA country rows
+  mutate(labels = paste0(Country, " (", ecDNA_status, "/", n, ")"))
+
+# Create a mapping for country names
+country_stats <- country_stats %>%
+  mutate(sovereignt = case_when(
+    Country == "United States of America" ~ "USA",
+  ))
+
+#write country_stats to a file
+#write.csv(country_stats, '~/iCloud/dev/Sherlock-Lung/metadata/nonsmoker-country-stats.tsv', row.names = FALSE, sep = '\t')
+
+# Create a mapping for country names
+country_stats <- country_stats %>%
+  mutate(sovereignt = case_when(
+    Country == "USA" ~ "United States of America",
+    Country == "South Korea" ~ "South Korea", 
+    Country == "Czech Republic" ~ "Czechia",
+    Country == "Hong Kong S.A.R." ~ "China",
+    Country == "Republic of Serbia" ~ "Republic of Serbia",
+    Country == "Russia" ~ "Russia",
+    Country == "Canada" ~ "Canada",
+    Country == "France" ~ "France",
+    Country == "Spain" ~ "Spain",
+    Country == "Italy" ~ "Italy",
+    Country == "Poland" ~ "Poland",
+    Country == "Romania" ~ "Romania",
+    Country == "Taiwan" ~ "Taiwan",
+    Country == "Azerbaijan" ~ "Azerbaijan",
+    Country == "Philippines" ~ "Philippines",
+    Country == "Portugal" ~ "Portugal",
+    Country == "Tunisia" ~ "Tunisia",
+    Country == "Uzbekistan" ~ "Uzbekistan",
+    TRUE ~ Country
+  ))
+
+# Install and load required packages if not already done
+if (!require("sf")) install.packages("sf")
+if (!require("rnaturalearth")) install.packages("rnaturalearth")
+if (!require("ggrepel")) install.packages("ggrepel")
+
+library(sf)
+library(rnaturalearth)
+library(ggrepel)
+
+# Prepare sf object for plotting
+sdf <- ne_countries(scale = 50, returnclass = "sf") %>%
+  left_join(country_stats, by = "sovereignt")
+
+label_positions <- tribble(
+  ~Country, ~x, ~y,
+  "USA", -100, 40,
+  "Canada", -100, 60,
+  "France", 2, 47,
+  "Spain", -8, 40,
+  "Italy", 15, 43,
+  "Czech Republic", 15, 51,
+  "Poland", 20, 52,
+  "Romania", 25, 46,
+  "Republic of Serbia", 21, 44,
+  "Russia", 100, 60,
+  "South Korea", 128, 37,
+  "Hong Kong S.A.R.", 115, 22,
+  "Taiwan", 122, 25,
+  "Tunisia", 10, 34,
+  "Azerbaijan", 45, 40,
+  "Philippines", 122, 12,
+  "Portugal", -8, 38,
+  "Uzbekistan", 65, 42
+)
+
+sdf <- sdf %>%
+  left_join(label_positions, by = "Country")
+
+# Create custom color palette
+custom_colors <- colorRampPalette(colors = c("#FF0000", "#FFA500", "#008000"))(100)
+
+nonsmoker_map <- ggplot() + 
+  geom_sf(data = sdf, aes(fill = ecDNA_status_perc), size = .2, color = 'white') +
+  
+  geom_label_repel(
+  data = distinct(sdf %>% filter(!is.na(n)) %>% as.data.frame(), Country, .keep_all = TRUE),
+  aes(x = x, y = y, label = labels),
+  size = 3.5,
+  fontface = 2,
+  max.overlaps = 50,  # Increased from 20 to 50
+  box.padding = 0.5,
+  force = 10,
+  label.padding = unit(0.2, "lines"),
+  label.r = unit(0, "lines"),
+  fill = "white",
+  alpha = 0.8
+  ) +
+  scale_fill_stepsn(
+    colors = c("#008000", "#FFA500", "#FF0000", "#8B0000"),  # Four distinct colors: green, orange, red, dark crimson
+    breaks = c(0.25, 0.5, 0.75),  # Breakpoints at 25%, 50%, and 75%
+    values = scales::rescale(c(0, 0.25, 0.5, 0.75, 1)),  # Ensure the full range is covered
+    na.value = 'grey85',
+    labels = scales::percent_format(),
+    name = "ecDNA+\ncases",
+    limits = c(0, 1)
+  ) +
+  coord_sf(ylim = c(-50, 90)) +
+  theme_void() +
+  theme(
+    legend.position = "top",
+    legend.direction = "horizontal",
+    legend.justification = "center",
+    legend.title = element_text(face = 2, margin = margin(b = 5)),
+    legend.margin = margin(t = 10),
+    legend.key.width = unit(3, "cm")
+  )
+
+
+#NOW SMOKERS
+
+# Load data
+ecDNA = read.delim('../data/ecDNA-annotations.txt')
+# Replace NA with 0
+ecDNA$ecDNA_status[is.na(ecDNA$ecDNA_status)] <- 0
+
+countries <- read.csv("../metadata/tongwu_country_data.txt", header=TRUE, sep = '\t')
+metadata <- read.csv("..data/log-reg-table5.tsv", header=TRUE, sep = '\t')
+# Filter and select relevant columns
+metadata <- metadata %>% select(Tumor_Barcode, Smoking)
+countries <- merge(countries, metadata, by = "Tumor_Barcode", all.x = TRUE)
+
+countries <- countries %>% filter(Smoking == "Smoker")
+
+merged <- merge(countries, ecDNA, by="Tumor_Barcode", all.x = TRUE)
+
+#filter NA in Country column
+merged <- merged %>% filter(!is.na(Country))
+
+
+# Process the merged data to get ecDNA stats
+country_stats <- merged %>%
+  group_by(Country) %>%
+  summarise(
+    n = n(),
+    ecDNA_status = sum(ecDNA_status),
+    ecDNA_status_perc = sum(ecDNA_status)/n
+  ) %>%
+  filter(!is.na(Country)) %>%  # Remove the NA country rows
+  mutate(labels = paste0(Country, " (", ecDNA_status, "/", n, ")"))
+
+# Create a mapping for country names
+country_stats <- country_stats %>%
+  mutate(sovereignt = case_when(
+    Country == "USA" ~ "United States of America",  # Match the Country value "USA"
+    Country == "South Korea" ~ "South Korea",
+    Country == "Germany" ~ "Germany",
+    TRUE ~ Country
+  ))
+
+# Install and load required packages if not already done
+if (!require("sf")) install.packages("sf")
+if (!require("rnaturalearth")) install.packages("rnaturalearth")
+if (!require("ggrepel")) install.packages("ggrepel")
+
+library(sf)
+library(rnaturalearth)
+library(ggrepel)
+
+# Prepare sf object for plotting
+sdf <- ne_countries(scale = 50, returnclass = "sf") %>%
+  left_join(country_stats, by = "sovereignt")
+
+# Manual label positions - single position for USA
+label_positions <- tribble(
+  ~Country, ~x, ~y,
+  "USA", -100, 40,
+  "Canada", -100, 60,
+  "Germany", 10, 51,
+  "Italy", 15, 43,
+  "South Korea", 128, 37
+)
+
+sdf <- sdf %>%
+  left_join(label_positions, by = "Country")
+
+# Create the plot
+smoker_map <- ggplot() + 
+  geom_sf(data = sdf, aes(fill = ecDNA_status_perc), size = .2, color = 'white') +
+  geom_label_repel(
+    data = distinct(sdf %>% filter(!is.na(n)) %>% as.data.frame(), Country, .keep_all = TRUE),
+    aes(x = x, y = y, label = labels),
+    size = 3.5,
+    fontface = 2,
+    max.overlaps = 20,
+    box.padding = 0.5,
+    force = 10,
+    label.padding = unit(0.2, "lines"),
+    label.r = unit(0, "lines"),
+    fill = "white",
+    alpha = 0.8
+  ) +
+  scale_fill_stepsn(
+    colors = c("#008000", "#FFA500", "#FF0000", "#8B0000"),  # Four distinct colors: green, orange, red, dark crimson
+    breaks = c(0.25, 0.4999, 0.75),  # Adjust the 50% break to 49.99% so 50% falls into the red range
+    values = scales::rescale(c(0, 0.25, 0.4999, 0.75, 1)),  # Adjust values accordingly
+    na.value = 'grey85',
+    labels = scales::percent_format(),
+    name = "ecDNA+\ncases",
+    limits = c(0, 1)
+  ) +
+  coord_sf(ylim = c(-50, 90)) +
+  theme_void() +
+  theme(
+    legend.position = "top",
+    legend.direction = "horizontal",
+    legend.justification = "center",
+    legend.title = element_text(face = 2, margin = margin(b = 5)),
+    legend.margin = margin(t = 10),
+    legend.key.width = unit(3, "cm")
+  )
+
+```
+
+```{r SUPP FIGURE 2E -- USA ecDNA prevalence bar plot--smokers vs nonsmokers}
+library(logistf)
+
+#SMOKER COUNTRY
+ecDNA = read.delim('..data/ecDNA-annotations.txt')
+#replace NA with 0
+ecDNA$ecDNA_status[is.na(ecDNA$ecDNA_status)] <- 0
+
+countries <- read.csv('../metadata/smoker_country.txt', header=TRUE, sep = '\t')
+#make all country to USA if tumor barcode containing TCGA 
+countries$Country[grepl("TCGA", countries$Tumor_Barcode)] <- "USA"
+#make all NA countries to USA
+countries$Country[is.na(countries$Country)] <- "USA"
+countries <- countries[,c("Tumor_Barcode", "Country")]
+
+s <- merge(countries, ecDNA, by="Tumor_Barcode")
+
+
+#NONSMOKER COUNTRY
+countries <- read.csv('../metadata/sherlock_country.csv', header=TRUE)
+
+metadata = read.csv("../metadata/sherlock_1217_metadata", sep = '\t', header=TRUE)
+metadata <- metadata[metadata$Smoking == "Non-Smoker",]
+metadata <- metadata[metadata$Smoking != "Unknown",]
+
+merged1 <- merge(countries, metadata, by="Tumor_Barcode", all.y=TRUE)
+
+#change country to USA if tumor barcode containing TCGA
+merged1$Country[grepl("TCGA", merged1$Tumor_Barcode)] <- "USA"
+ns <- merge(merged1, ecDNA, by="Tumor_Barcode")
+
+#delete Smoking.y and change Smoking.x to Smoking
+ns <- ns %>%
+  dplyr::select(-Smoking.y) %>%
+  dplyr::rename(Smoking = Smoking.x)
+
+ns <- dplyr::select(ns, Tumor_Barcode, Country, Smoking, ecDNA_status)
+ns$Country[ns$Country == "United States of America"] <- "USA"
+#stack dataframes
+met_clean <- rbind(s, ns)
+met_clean$Country_new <- met_clean$Country
+
+unique_countries <- na.omit(unique(met_clean$Country_new))
+
+# Minimum number of cases per country
+min_cases <- 9
+
+# Initialize a list to store results
+results_list <- list()
+covadata <- read.csv("..data/log-reg-table5.tsv", sep = '\t', header=TRUE)
+covdata = covadata %>% dplyr::select(Tumor_Barcode, Gender, Tumor_Purity,
+                                     Age, Histology, Ancestry, Smoking)
+#merge
+met_clean <- merge(met_clean, covdata, by="Tumor_Barcode")
+#met_clean$Country[is.na(met_clean$Country)] <- "USA"
+
+#subset for USA adenocarcinoma only 
+met_clean <- read.csv("..data/log-reg-table5.tsv", sep = '\t', header=TRUE)
+met_clean <- met_clean[met_clean$Country == "United States of America" | met_clean$Country == "United States" | met_clean$Country == "USA",]
+#met_clean <- met_clean[met_clean$Histology == "Adenocarcinoma",]
+#Change NA in Country column to "USA"
+
+smokers <- met_clean[met_clean$Smoking == "Smoker",]
+nonsmokers <- met_clean[met_clean$Smoking == "Non-Smoker",]
+
+
+#drop NA from country column
+met_clean <- met_clean %>% drop_na(Country)
+
+#set reference levels for Smoking column
+met_clean$Smoking <- factor(met_clean$Smoking, levels = c("Non-Smoker", "Smoker"))
+
+
+model <- logistf(ecDNA_status ~ Ancestry + Gender + Age + Smoking + Histology + Tumor_Purity, 
+                 data = met_clean, firth=TRUE)
+
+# Manually extract coefficients, standard errors, and p-values
+tidy_model <- data.frame(
+  term = names(coef(model)),               # Extract term names
+  estimate = coef(model),                  # Extract coefficients
+  std.error = sqrt(diag(vcov(model))),     # Standard errors from variance-covariance matrix
+  p.value = model$prob                     # Extract p-values (specific to logistf or similar models)
+)
+
+# Calculate confidence intervals
+conf_intervals <- confint(model)           # Extract confidence intervals
+conf_intervals <- exp(conf_intervals)      # Exponentiate for odds ratio scale
+
+# Add confidence intervals to tidy_model
+tidy_model <- tidy_model %>%
+  mutate(conf.low = conf_intervals[, 1],    # Lower CI
+         conf.high = conf_intervals[, 2])  # Upper CI
+
+# Calculate odds ratios
+tidy_model <- tidy_model %>%
+  mutate(odds_ratio = exp(estimate))       # Exponentiate coefficients to get odds ratios
+
+#recode ecDNA_status columns as ecDNA+ or ecDNA-
+met_clean$ecDNA_status <- ifelse(met_clean$ecDNA_status == 1, "ecDNA+", "ecDNA-")
+
+
+create_barplot <- function(data, x_var, y_var = "ecDNA.", palette_colors = c("ecDNA+"="red", "ecDNA-" = "gray"), title = NULL, include_chisq = TRUE) {
+ require(dplyr)
+ require(ggplot2)
+ x_var_sym <- rlang::sym(x_var)
+ y_var_sym <- rlang::sym(y_var)
+ 
+ data <- data %>%
+   dplyr::filter(!is.na(!!x_var_sym) & !is.na(!!y_var_sym))
+ 
+ data[[y_var]] <- factor(data[[y_var]], levels = c("ecDNA+", "ecDNA-"))
+ 
+ if (include_chisq) {
+   chisq_result <- chisq.test(table(data[[x_var]], data[[y_var]]))$p.value
+   subtitle_text <- paste0("p= ", ifelse(chisq_result < 0.05, as.character(signif(chisq_result, digits = 5)), round(chisq_result, 3)))
+ } else {
+   subtitle_text <- NULL
+ }
+ 
+ data_summary <- data %>%
+   group_by(!!x_var_sym, !!y_var_sym) %>%
+   summarise(count = n(), .groups = "drop") %>%
+   group_by(!!x_var_sym) %>%
+   arrange(desc(!!y_var_sym)) %>%
+   mutate(
+     percentage = count / sum(count) * 100,
+     running_total = cumsum(percentage),
+     position = case_when(
+       !!y_var_sym == "ecDNA+" ~ running_total - (percentage/2),
+       TRUE ~ running_total - percentage - (percentage/2)
+     )
+   )
+ 
+ total_counts <- data %>%
+   group_by(!!x_var_sym) %>%
+   summarise(total_count = n())
+ 
+ p <- ggplot(data_summary, aes(x = !!x_var_sym, y = percentage, fill = !!y_var_sym)) +
+   geom_bar(stat = "identity", position = "stack", color = "black") +
+   labs(y = "Percentage", subtitle="OR=1.81, p=0.15, Adjusted by age, sex, ancestry, histology") +
+   coord_cartesian(ylim = c(-10, 100)) +
+   theme_minimal() +
+   scale_fill_manual(values = palette_colors) +
+   theme(
+     plot.title = element_text(size = 12, face = "bold"),
+     plot.subtitle = element_text(size = 8),
+     axis.text.x = element_text(face = "bold", margin = margin(t = 5)),
+     plot.margin = margin(t = 10, r = 10, b = 30, l = 10)
+   ) +
+   geom_text(data = total_counts, aes(x = !!x_var_sym, y = -2, label = paste0("n=", total_count)),
+             vjust = 1, size = 3, color = "black", inherit.aes = FALSE) +
+   geom_text(aes(y = position, label = paste0("n=", count)), size = 3, color = "black")
+ 
+ return(p)
+}
+
+usa_ecDNA <- create_barplot(met_clean, x_var = "Smoking", title = "", palette_colors = c("ecDNA+"="red", "ecDNA-" = "gray")) + theme(axis.text.x = element_text(size = 8, angle = 0, hjust = 0.5))
+
+```
+
+
+```{r GENERAL CUSTOM FOREST PLOTTING FUNCTION}
+
+create_forest_plot <- function(stats_df, var_mapping, xmin = -6, xmax = 6, highlight_var = NULL, feature_order = NULL, x_label = "log2(Odds Ratio)") {
+  
+  # Ensure Odds values are positive
+  plot_df <- stats_df %>% filter(Odds > 0)  
+  
+  # Ensure Features column is character before modification
+  plot_df$Features <- as.character(plot_df$Features)
+
+  # Set up factor levels for y-axis ordering
+  if (!is.null(feature_order)) {
+    plot_df$Features <- factor(plot_df$Features, levels = feature_order, ordered = TRUE)
+  }
+  # 
+  # # Default text color is black
+  # y_colors <- rep("black", length(plot_df$Features))
+  # 
+  # # Apply highlighting logic: If 'Stage', 'Metastasis', or 'Passive' appears anywhere, make it purple
+  # highlight_condition <- grepl("Stage|Metastasis|Passive", plot_df$Features, ignore.case = TRUE)
+  # y_colors[highlight_condition] <- "purple"
+  # 
+  # print(y_colors)
+  # print(plot_df$Features)
+  # 
+  # # Debugging prints (optional, remove if not needed)
+  # print("Highlighted Features:")
+  # print(plot_df$Features[highlight_condition])
+  
+  y_colors <- rep("black", length(plot_df$Features))
+  # This ensures that the first variable, our variable of interest, is always purple
+  #change last element of y_colors to purple
+  y_colors[length(y_colors)] <- "purple"
+  
+  # Create forest plot
+  ggplot(plot_df, aes(x = log2(Odds), y = Features)) +
+    geom_point(aes(color = ifelse(Corrected.p.value < 0.05, "red", "black")), size = 3) +  
+    geom_errorbarh(aes(xmin = log2(Lower.CI), xmax = log2(Upper.CI), 
+                       color = ifelse(Corrected.p.value < 0.05, "red", "black")), height = 0.2) +  
+    geom_text(aes(label = paste0("OR = ", Odds, ", q-value = ", Corrected.p.value)), 
+              vjust = -0.7, nudge_y = 0.2, nudge_x = 0.4, size = 3.2) +
+    theme_bw() +
+    labs(title = "", x = x_label, y = NULL) +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 10, face = "bold"),
+      axis.text.y = element_text(size = 10, color = y_colors),  # Apply dynamic coloring
+      panel.grid.major = element_line(color = "gray90"),
+      panel.grid.minor = element_line(color = "gray95"),
+      panel.border = element_rect(color = "black", fill = NA)
+    ) +
+    scale_color_identity() +
+    xlim(xmin, xmax) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "gray")
+}
+
+```
+
+
+
+```{r SUPP. FIGURE 3 -- STAGE & METASTASIS & PASSIVE SMOKING}
+
+#STAGE FIRST
+data <- read.csv("..data/log-reg-table5.tsv", sep="\t")
+data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis, Stage_recoded)
+
+#remove parentheses from Stage_recoded column
+data$Stage_recoded <- gsub("Stage\\((I+)\\-(I+V*)\\)", "Stage \\1-\\2", data$Stage_recoded)
+
+#remove rows with "Unknown from stage column
+data <- dplyr::filter(data, Stage_recoded != "Unknown")
+
+metadata = read.csv("../metadata/sherlock_1217_metadata", sep = '\t', header=TRUE)
+
+merged <- merge(data, metadata, by = "Tumor_Barcode")
+merged <- dplyr::filter(merged, Smoking=="Non-Smoker")
+#merged <- dplyr::filter(merged, Histology=="Adenocarcinoma")
+
+merged[merged == ''] <- NA
+merged <- merged %>%
+  mutate(ecDNA_status = if_else(is.na(ecDNA_status), 1, ecDNA_status))
+
+merged$Ancestry <- merged$Assigned_Population
+merged$Ancestry[merged$Ancestry == 'AFR'] <- "Other"
+merged$Ancestry[merged$Ancestry == "AMR or Mixed"] <- "Other"
+merged$Smoking[merged$Smoking == 'Unknown'] <- "Non-Smoker"
+#merged
+merged$Histology[merged$Histology == 'Adenosquamous carcinoma'] <- "Other"
+merged$Histology[merged$Histology == 'Others'] <- "Other"
+merged$Histology[merged$Histology == 'Squamous cell carcinoma'] <- "LUSC"
+merged$Histology[merged$Histology == 'Adenocarcinoma'] <- "LUAD"
+merged$Histology[merged$Histology == 'Carcinoid tumor'] <- "Carcinoid"
+
+#SET REFERENCE VARIABLES
+merged$Passive_Smoking <- merged$Passive_Smoking %>% as.factor()
+merged$Passive_Smoking <- relevel(merged$Passive_Smoking, ref = "No")
+
+merged$Histology <- merged$Histology %>% as.factor()
+merged$Histology <- relevel(merged$Histology, ref = "LUAD")
+
+merged$Stage <- merged$Stage3 %>% as.factor()
+merged$Stage <- relevel(merged$Stage, ref = "Early Stage(I)")
+
+merged$Ancestry <- merged$Ancestry %>% as.factor()
+merged$Ancestry <- relevel(merged$Ancestry, ref = "EUR")
+
+merged$Gender <- merged$Gender %>% as.factor()
+merged$Gender <- relevel(merged$Gender, ref="Male")
+
+
+merged$Recurrence <- merged$Recurrence.y %>% as.factor()
+merged$Recurrence <- relevel(merged$Recurrence, ref="No")
+
+merged$Metastasis <- merged$Metastasis.y %>% as.factor()
+merged$Metastasis <- relevel(merged$Metastasis, ref="No")
+
+merged$Stage_recoded <- merged$Stage_recoded %>% as.factor()
+merged$Stage_recoded <- relevel(merged$Stage_recoded, ref="Stage I-II")
+
+
+#NOW ADD STAGE
+model_stage <- glm(ecDNA_status ~ Gender + purity + Age + Ancestry + Stage_recoded + Histology, data = merged, family = binomial(link = "logit"))
+
+CI <- confint2(
+  model_stage,
+  level = 0.9,
+  test = c("lr"),
+  digits = max(3, getOption("digits") - 2),
+  verbose = TRUE
+)
+
+coefficients <- as.data.frame(tidy(model_stage))
+
+coefficients$Corrected.p.value <- p.adjust(coefficients$p.value, method="fdr")
+coefficients$Odds <- exp(coefficients$estimate)
+coefficients$Lower.CI <- exp(CI[,1])
+coefficients$Upper.CI <- exp(CI[,2])
+coefficients$Features <- coefficients$term
+
+result_stage <- coefficients %>% mutate_if(is.numeric, round, digits=2)
+result_stage <- result_stage %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+
+#remove first row from results
+result_stage <- dplyr::filter(result_stage, Features!="(Intercept)")
+
+#add map for stage
+map <- list(
+    "GenderFemale" = "Sex:Female (Ref=Male)",
+    "purity" = "Purity",
+    "Age" = "Age",
+    "HistologyLUSC" = "Histology:LUSC (Ref=LUAD)",
+    "HistologyOther" = "Histology:Other (Ref=LUAD)",
+    "HistologyCarcinoid" = "Histology:Carcinoid (Ref=LUAD)",
+    "AncestryEAS" = "Ancestry:EAS (Ref=EUR)",
+    "AncestryOther" = "Ancestry:Other (Ref=EUR)",
+    "Stage_recodedStage III-IV" = "Stage III-IV (Ref=Stage I-II)"
+)
+
+result_stage$Features <- unlist(map[result_stage$Features])
+
+#sort by lowest to highest Corrected.p.value
+result_stage <- result_stage[order(result_stage$Corrected.p.value),]
+
+result_stage$Features <- gsub("(\\(Ref)", "\n\\1", result_stage$Features)
+
+# Define the desired order of features
+feature_order <- c(
+  "Stage III-IV \n(Ref=Stage I-II)",
+  "Sex:Female \n(Ref=Male)",
+  "Purity",
+  "Histology:LUSC \n(Ref=LUAD)",
+  "Histology:Other \n(Ref=LUAD)",
+  "Histology:Carcinoid \n(Ref=LUAD)",
+  "Ancestry:Other \n(Ref=EUR)",
+  "Ancestry:EAS \n(Ref=EUR)",
+  "Age"
+)
+
+feature_order <- rev(feature_order)
+
+#remove Purity 
+result_stage <- dplyr::filter(result_stage, Features!="Purity")
+
+stage_forest <- create_forest_plot(result_stage, map, highlight_var = "Stage III-IV \n(Ref=Stage I-II)", feature_order=feature_order)
+
+
+
+#NOW METASTASIS
+data <- read.csv("../data/log-reg-table5.tsv", sep="\t")
+data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis)
+
+metadata = read.csv("../metadata/sherlock_1217_metadata", sep = '\t', header=TRUE)
+
+merged <- merge(data, metadata, by = "Tumor_Barcode")
+merged <- dplyr::filter(merged, Smoking=="Non-Smoker")
+
+#filter for adenocarcinoma
+#merged <- dplyr::filter(merged, Histology=="Adenocarcinoma")
+
+merged[merged == ''] <- NA
+merged <- merged %>%
+  mutate(ecDNA_status = if_else(is.na(ecDNA_status), 1, ecDNA_status))
+
+merged$Ancestry <- merged$Assigned_Population
+merged$Ancestry[merged$Ancestry == 'AFR'] <- "Other"
+merged$Ancestry[merged$Ancestry == "AMR or Mixed"] <- "Other"
+merged$Smoking[merged$Smoking == 'Unknown'] <- "Non-Smoker"
+#merged
+merged$Histology[merged$Histology == 'Adenosquamous carcinoma'] <- "Other"
+merged$Histology[merged$Histology == 'Others'] <- "Other"
+merged$Histology[merged$Histology == 'Squamous cell carcinoma'] <- "LUSC"
+merged$Histology[merged$Histology == 'Adenocarcinoma'] <- "LUAD"
+merged$Histology[merged$Histology == 'Carcinoid tumor'] <- "Carcinoid"
+
+#SET REFERENCE VARIABLES
+merged$Passive_Smoking <- merged$Passive_Smoking %>% as.factor()
+merged$Passive_Smoking <- relevel(merged$Passive_Smoking, ref = "No")
+
+merged$Histology <- merged$Histology %>% as.factor()
+merged$Histology <- relevel(merged$Histology, ref = "LUAD")
+
+merged$Stage <- merged$Stage3 %>% as.factor()
+merged$Stage <- relevel(merged$Stage, ref = "Early Stage(I)")
+
+merged$Ancestry <- merged$Ancestry %>% as.factor()
+merged$Ancestry <- relevel(merged$Ancestry, ref = "EUR")
+
+merged$Gender <- merged$Gender %>% as.factor()
+merged$Gender <- relevel(merged$Gender, ref="Male")
+
+# merged$therapy <- merged$therapy %>% as.factor()
+# merged$therapy <- relevel(merged$therapy, ref="No")
+
+merged$Recurrence <- merged$Recurrence.y %>% as.factor()
+merged$Recurrence <- relevel(merged$Recurrence, ref="No")
+
+merged$Metastasis <- merged$Metastasis.y %>% as.factor()
+merged$Metastasis <- relevel(merged$Metastasis, ref="No")
+
+
+model_metastasis <- glm(ecDNA_status ~ Gender + purity + Age + Ancestry + Metastasis + Histology, data = merged, family = binomial(link = "logit"))
+
+CI <- confint2(
+  model_metastasis,
+  level = 0.9,
+  test = c("lr"),
+  digits = max(3, getOption("digits") - 2),
+  verbose = TRUE
+)
+
+coefficients <- as.data.frame(tidy(model_metastasis))
+
+coefficients$Corrected.p.value <- p.adjust(coefficients$p.value, method="fdr")
+coefficients$Odds <- exp(coefficients$estimate)
+coefficients$Lower.CI <- exp(CI[,1])
+coefficients$Upper.CI <- exp(CI[,2])
+coefficients$Features <- coefficients$term
+
+result_metastasis <- coefficients %>% mutate_if(is.numeric, round, digits=2)
+result_metastasis <- result_metastasis %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+
+#remove first row from results
+result_metastasis <- dplyr::filter(result_metastasis, Features!="(Intercept)")
+
+#add map for stage
+map <- list(
+    "GenderFemale" = "Sex:Female (Ref=Male)",
+    "purity" = "Purity",
+    "Age" = "Age",
+    "HistologyLUSC" = "Histology:LUSC (Ref=LUAD)",
+    "HistologyOther" = "Histology:Other (Ref=LUAD)",
+    "HistologyCarcinoid" = "Histology:Carcinoid (Ref=LUAD)",
+    "AncestryEAS" = "Ancestry:EAS (Ref=EUR)",
+    "AncestryOther" = "Ancestry:Other (Ref=EUR)",
+    "MetastasisYes" = "Metastasis:Yes (Ref=No)"
+)
+
+result_metastasis$Features <- unlist(map[result_metastasis$Features])
+
+#sort by lowest to highest Corrected.p.value
+result_metastasis <- result_metastasis[order(result_metastasis$Corrected.p.value),]
+
+result_metastasis$Features <- gsub("(\\(Ref)", "\n\\1", result_metastasis$Features)
+
+# Define the desired order of features
+feature_order <- c(
+  "Metastasis:Yes \n(Ref=No)",
+  "Sex:Female \n(Ref=Male)",
+  "Purity",
+  "Histology:LUSC \n(Ref=LUAD)",
+  "Histology:Other \n(Ref=LUAD)",
+  "Histology:Carcinoid \n(Ref=LUAD)",
+  "Ancestry:Other \n(Ref=EUR)",
+  "Ancestry:EAS \n(Ref=EUR)",
+  "Age"
+)
+
+feature_order <- rev(feature_order)
+result_metastasis <- dplyr::filter(result_metastasis, Features!="Purity")
+
+metastasis_forest <- create_forest_plot(result_metastasis, map, highlight_var = "Metastasis:Yes \n(Ref=No)", feature_order=feature_order)
+
+
+
+#NOW PASSIVE SMOKING
+data <- read.csv("..data/log-reg-table5.tsv", sep="\t")
+data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis)
+
+metadata = read.csv("../metadata/sherlock_1217_metadata.tsv", sep = '\t', header=TRUE)
+
+merged <- merge(data, metadata, by = "Tumor_Barcode")
+merged <- dplyr::filter(merged, Smoking=="Non-Smoker")
+#merged <- dplyr::filter(merged, Histology=="Adenocarcinoma")
+
+merged[merged == ''] <- NA
+merged <- merged %>%
+  mutate(ecDNA_status = if_else(is.na(ecDNA_status), 1, ecDNA_status))
+
+merged$Ancestry <- merged$Assigned_Population
+merged$Ancestry[merged$Ancestry == 'AFR'] <- "Other"
+merged$Ancestry[merged$Ancestry == "AMR or Mixed"] <- "Other"
+merged$Smoking[merged$Smoking == 'Unknown'] <- "Non-Smoker"
+#merged
+merged$Histology[merged$Histology == 'Adenosquamous carcinoma'] <- "Other"
+merged$Histology[merged$Histology == 'Others'] <- "Other"
+merged$Histology[merged$Histology == 'Squamous cell carcinoma'] <- "LUSC"
+merged$Histology[merged$Histology == 'Adenocarcinoma'] <- "LUAD"
+merged$Histology[merged$Histology == 'Carcinoid tumor'] <- "Carcinoid"
+
+#SET REFERENCE VARIABLES
+merged$Passive_Smoking <- merged$Passive_Smoking %>% as.factor()
+merged$Passive_Smoking <- relevel(merged$Passive_Smoking, ref = "No")
+
+merged$Histology <- merged$Histology %>% as.factor()
+merged$Histology <- relevel(merged$Histology, ref = "LUAD")
+
+merged$Stage <- merged$Stage3 %>% as.factor()
+merged$Stage <- relevel(merged$Stage, ref = "Early Stage(I)")
+
+merged$Ancestry <- merged$Ancestry %>% as.factor()
+merged$Ancestry <- relevel(merged$Ancestry, ref = "EUR")
+
+merged$Gender <- merged$Gender %>% as.factor()
+merged$Gender <- relevel(merged$Gender, ref="Male")
+
+# merged$therapy <- merged$therapy %>% as.factor()
+# merged$therapy <- relevel(merged$therapy, ref="No")
+
+merged$Recurrence <- merged$Recurrence.y %>% as.factor()
+merged$Recurrence <- relevel(merged$Recurrence, ref="No")
+
+merged$Metastasis <- merged$Metastasis.y %>% as.factor()
+merged$Metastasis <- relevel(merged$Metastasis, ref="No")
+
+
+model_passive <- glm(ecDNA_status ~ Gender + purity + Age + Ancestry + Passive_Smoking+ Histology, data = merged, family = binomial(link = "logit"))
+
+CI <- confint2(
+  model_passive,
+  level = 0.9,
+  test = c("lr"),
+  digits = max(3, getOption("digits") - 2),
+  verbose = TRUE
+)
+
+coefficients <- as.data.frame(tidy(model_passive))
+
+coefficients$Corrected.p.value <- p.adjust(coefficients$p.value, method="fdr")
+coefficients$Odds <- exp(coefficients$estimate)
+coefficients$Lower.CI <- exp(CI[,1])
+coefficients$Upper.CI <- exp(CI[,2])
+coefficients$Features <- coefficients$term
+
+result_passive <- coefficients %>% mutate_if(is.numeric, round, digits=2)
+result_passive <- result_passive %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+
+#remove first row from results
+result_passive <- dplyr::filter(result_passive, Features!="(Intercept)")
+
+result_passive$Lower.CI[result_passive$Lower.CI == 0] <- 2^-3
+result_passive$Odds[result_passive$Odds == 0] <- 2^-2
+
+#add map for stage
+map <- list(
+    "GenderFemale" = "Sex:Female (Ref=Male)",
+    "purity" = "Purity",
+    "Age" = "Age",
+    "HistologyLUSC" = "Histology:LUSC (Ref=LUAD)",
+    "HistologyOther" = "Histology:Other (Ref=LUAD)",
+    "HistologyCarcinoid" = "Histology:Carcinoid (Ref=LUAD)",
+    "AncestryEAS" = "Ancestry:EAS (Ref=EUR)",
+    "AncestryOther" = "Ancestry:Other (Ref=EUR)",
+    "Passive_SmokingYes" = "Passive Smoking:Yes (Ref=No)"
+)
+
+result_passive$Features <- unlist(map[result_passive$Features])
+
+
+# Set the order of the Features
+
+result_passive$Features <- gsub("(\\(Ref)", "\n\\1", result_passive$Features)
+
+# Define the desired order of features
+feature_order <- c(
+  "Passive Smoking:Yes \n(Ref=No)",
+  "Sex:Female \n(Ref=Male)",
+  "Purity",
+  "Histology:LUSC \n(Ref=LUAD)",
+  "Histology:Other \n(Ref=LUAD)",
+  "Histology:Carcinoid \n(Ref=LUAD)",
+  "Ancestry:Other \n(Ref=EUR)",
+  "Ancestry:EAS \n(Ref=EUR)",
+  "Age"
+)
+
+feature_order <- rev(feature_order)
+
+#change value for Histology:Carcinoid \n(Ref=LUAD) row and Upper.CI collumn to 0.73 if Inf
+result_passive$Upper.CI[result_passive$Features == "Histology:Carcinoid \n(Ref=LUAD)"] <- 0.73
+
+result_passive <- dplyr::filter(result_passive, Features!="Purity")
+
+passive_forest <- create_forest_plot(result_passive, map, highlight_var = "Passive Smoking:Yes \n(Ref=No)", feature_order=feature_order)
+
+
+#NOW SMOKERS
+
+data <- read.csv("../data/log-reg-table5.tsv", sep="\t")
+data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis, Stage_recoded)
+
+#remove parentheses from Stage_recoded column
+data$Stage_recoded <- gsub("Stage\\((I+)\\-(I+V*)\\)", "Stage \\1-\\2", data$Stage_recoded)
+
+#remove rows with "Unknown from stage column
+data <- dplyr::filter(data, Stage_recoded != "Unknown")
+
+metadata = read.csv("../metadata/sherlock_1217_metadata.tsv", sep = '\t', header=TRUE)
+
+merged <- merge(data, metadata, by = "Tumor_Barcode")
+merged <- dplyr::filter(merged, Smoking=="Smoker")
+#merged <- dplyr::filter(merged, Histology=='Adenocarcinoma')
+
+merged[merged == ''] <- NA
+merged <- merged %>%
+  mutate(ecDNA_status = if_else(is.na(ecDNA_status), 1, ecDNA_status))
+
+merged$Ancestry <- merged$Assigned_Population
+merged$Ancestry[merged$Ancestry == 'AFR'] <- "Other"
+merged$Ancestry[merged$Ancestry == "AMR or Mixed"] <- "Other"
+merged$Smoking[merged$Smoking == 'Unknown'] <- "Non-Smoker"
+#merged
+merged$Histology[merged$Histology == 'Adenosquamous carcinoma'] <- "Other"
+merged$Histology[merged$Histology == 'Others'] <- "Other"
+merged$Histology[merged$Histology == 'Squamous cell carcinoma'] <- "LUSC"
+merged$Histology[merged$Histology == 'Adenocarcinoma'] <- "LUAD"
+merged$Histology[merged$Histology == 'Carcinoid tumor'] <- "Carcinoid"
+
+#SET REFERENCE VARIABLES
+merged$Histology <- merged$Histology %>% as.factor()
+merged$Histology <- relevel(merged$Histology, ref = "LUAD")
+
+merged$Stage <- merged$Stage3 %>% as.factor()
+merged$Stage <- relevel(merged$Stage, ref = "Early Stage(I)")
+
+merged$Ancestry <- merged$Ancestry %>% as.factor()
+merged$Ancestry <- relevel(merged$Ancestry, ref = "EUR")
+
+merged$Gender <- merged$Gender %>% as.factor()
+merged$Gender <- relevel(merged$Gender, ref="Male")
+
+
+merged$Metastasis <- merged$Metastasis.y %>% as.factor()
+merged$Metastasis <- relevel(merged$Metastasis, ref="No")
+
+merged$Stage_recoded <- merged$Stage_recoded %>% as.factor()
+merged$Stage_recoded <- relevel(merged$Stage_recoded, ref="Stage I-II")
+
+#NOW ADD STAGE
+model_stage <- glm(ecDNA_status ~ Gender + purity + Age + Stage_recoded + Histology, data = merged, family = binomial(link = "logit"))
+
+CI <- confint2(
+  model_stage,
+  level = 0.9,
+  test = c("lr"),
+  digits = max(3, getOption("digits") - 2),
+  verbose = TRUE
+)
+
+coefficients <- as.data.frame(tidy(model_stage))
+
+coefficients$Corrected.p.value <- p.adjust(coefficients$p.value, method="fdr")
+coefficients$Odds <- exp(coefficients$estimate)
+coefficients$Lower.CI <- exp(CI[,1])
+coefficients$Upper.CI <- exp(CI[,2])
+coefficients$Features <- coefficients$term
+
+result_stage <- coefficients %>% dplyr::mutate_if(is.numeric, round, digits=2)
+result_stage <- result_stage %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+
+#remove first row from results
+result_stage <- dplyr::filter(result_stage, Features!="(Intercept)")
+
+map <- list(
+    "GenderFemale" = "Sex:Female (Ref=Male)",
+    "purity" = "Purity",
+    "Age" = "Age",
+    "HistologyLUSC" = "Histology:LUSC (Ref=LUAD)",
+    "HistologyOther" = "Histology:Other (Ref=LUAD)",
+    "Stage_recodedStage III-IV" = "Stage III-IV (Ref=Stage I-II)"
+)
+
+
+# First map the features
+result_stage$Features <- unlist(map[result_stage$Features])
+
+result_stage$Features <- gsub("(\\(Ref)", "\n\\1", result_stage$Features)
+
+# For stage plot, use this feature order
+feature_order <- c(
+  "Stage III-IV \n(Ref=Stage I-II)",  
+  "Sex:Female \n(Ref=Male)",
+  "Purity",
+  "Histology:LUSC \n(Ref=LUAD)",
+  "Histology:Other \n(Ref=LUAD)",
+  "Age"
+)
+
+
+feature_order <- rev(feature_order)
+
+# #replace all infinity values with 13.54 in result dataframe
+# result_stage[result_stage == Inf] <- 13.54
+
+#remove Purity
+result_stage <- dplyr::filter(result_stage, Features!="Purity")
+# Create the forest plot
+smoker_stage_forest <- create_forest_plot(
+    result_stage, 
+    map, 
+    highlight_var = "Stage III-IV \n(Ref=Stage I-II)", 
+    feature_order = feature_order
+)
+
+
+#METASTASIS
+data <- read.csv("..data/log-reg-table5.tsv", sep="\t")
+data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis)
+
+metadata = read.csv("../metadata/sherlock_1217_metadata", sep = '\t', header=TRUE)
+
+merged <- merge(data, metadata, by = "Tumor_Barcode")
+merged <- dplyr::filter(merged, Smoking=="Smoker")
+#adeno only
+#merged <- dplyr::filter(merged, Histology=="Adenocarcinoma")
+
+merged[merged == ''] <- NA
+merged <- merged %>%
+  mutate(ecDNA_status = if_else(is.na(ecDNA_status), 1, ecDNA_status))
+
+merged$Ancestry <- merged$Assigned_Population
+merged$Ancestry[merged$Ancestry == 'AFR'] <- "Other"
+merged$Ancestry[merged$Ancestry == "AMR or Mixed"] <- "Other"
+merged$Smoking[merged$Smoking == 'Unknown'] <- "Non-Smoker"
+#merged
+merged$Histology[merged$Histology == 'Adenosquamous carcinoma'] <- "Other"
+merged$Histology[merged$Histology == 'Others'] <- "Other"
+merged$Histology[merged$Histology == 'Squamous cell carcinoma'] <- "LUSC"
+merged$Histology[merged$Histology == 'Adenocarcinoma'] <- "LUAD"
+merged$Histology[merged$Histology == 'Carcinoid tumor'] <- "Carcinoid"
+
+#SET REFERENCE VARIABLES
+
+merged$Histology <- merged$Histology %>% as.factor()
+merged$Histology <- relevel(merged$Histology, ref = "LUAD")
+
+merged$Stage <- merged$Stage3 %>% as.factor()
+merged$Stage <- relevel(merged$Stage, ref = "Early Stage(I)")
+
+merged$Ancestry <- merged$Ancestry %>% as.factor()
+merged$Ancestry <- relevel(merged$Ancestry, ref = "EUR")
+
+merged$Gender <- merged$Gender %>% as.factor()
+merged$Gender <- relevel(merged$Gender, ref="Male")
+
+# merged$therapy <- merged$therapy %>% as.factor()
+# merged$therapy <- relevel(merged$therapy, ref="No")
+
+merged$Metastasis <- merged$Metastasis.y %>% as.factor()
+merged$Metastasis <- relevel(merged$Metastasis, ref="No")
+
+merged <- merged %>% filter(!is.na(Metastasis))
+
+model_metastasis <- glm(ecDNA_status ~ Gender + purity + Age + Metastasis + Histology, data = merged, family = binomial(link = "logit"))
+
+CI <- confint2(
+  model_metastasis,
+  level = 0.9,
+  test = c("lr"),
+  digits = max(3, getOption("digits") - 2),
+  verbose = TRUE
+)
+
+coefficients <- as.data.frame(tidy(model_metastasis))
+
+coefficients$Corrected.p.value <- p.adjust(coefficients$p.value, method="fdr")
+coefficients$Odds <- exp(coefficients$estimate)
+coefficients$Lower.CI <- exp(CI[,1])
+coefficients$Upper.CI <- exp(CI[,2])
+coefficients$Features <- coefficients$term
+
+result_metastasis <- coefficients %>% mutate_if(is.numeric, round, digits=2)
+result_metastasis <- result_metastasis %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+
+#remove first row from results
+result_metastasis <- dplyr::filter(result_metastasis, Features!="(Intercept)")
+
+#add map for stage
+map <- list(
+    "GenderFemale" = "Sex:Female (Ref=Male)",
+    "purity" = "Purity",
+    "Age" = "Age",
+    "HistologyLUSC" = "Histology:LUSC (Ref=LUAD)",
+    "HistologyOther" = "Histology:Other (Ref=LUAD)",
+    "MetastasisYes" = "Metastasis:Yes (Ref=No)"
+)
+
+
+result_metastasis$Features <- unlist(map[result_metastasis$Features])
+
+#sort by lowest to highest Corrected.p.value
+result_metastasis <- result_metastasis[order(result_metastasis$Corrected.p.value),]
+
+result_metastasis$Features <- gsub("(\\(Ref)", "\n\\1", result_metastasis$Features)
+
+feature_order <- c(
+  "Metastasis:Yes \n(Ref=No)",
+  "Sex:Female \n(Ref=Male)",
+  "Purity",
+  "Histology:LUSC \n(Ref=LUAD)",
+  "Histology:Other \n(Ref=LUAD)",
+  "Age"
+)
+
+feature_order <- rev(feature_order)
+
+#remove Purity
+result_metastasis <- dplyr::filter(result_metastasis, Features!="Purity")
+
+smoker_metastasis_forest <- create_forest_plot(result_metastasis, map, highlight_var = "Metastasis:Yes \n(Ref=No)", feature_order=feature_order)
+
+
+#COMBINE ALL THE PLOTS
+# Load required package
+library(patchwork)
+library(ggplot2)
+
+# # Force all plots to have the same dimensions
+stage_forest <- stage_forest + theme(aspect.ratio = 2)
+metastasis_forest <- metastasis_forest + theme(aspect.ratio = 2)
+passive_forest <- passive_forest + theme(aspect.ratio = 2)
+
+smoker_stage_forest <- smoker_stage_forest + theme(aspect.ratio = 2)
+smoker_metastasis_forest <- smoker_metastasis_forest + theme(aspect.ratio = 2)
+
+combined_plot_ns <- plot_grid(
+  stage_forest, metastasis_forest, passive_forest, 
+  ncol = 3 # Add labels
+)
+
+combined_plot_s <- plot_grid(
+  smoker_stage_forest, smoker_metastasis_forest, 
+  ncol = 2
+)
+
+
+
+# Ensure all plots have the same x-axis limits
+x_min <- -6  
+x_max <- 6  
+
+# Apply consistent x-axis limits to all plots
+stage_forest <- stage_forest + 
+  xlim(x_min, x_max) + 
+  xlab("log2(Odds Ratio)") +
+  theme(aspect.ratio = 1)
+
+metastasis_forest <- metastasis_forest + 
+  xlim(x_min, x_max) + 
+  xlab("log2(Odds Ratio)") +
+  theme(aspect.ratio = 1)
+
+passive_forest <- passive_forest + 
+  xlim(x_min, x_max) + 
+  xlab("log2(Odds Ratio)") +
+  theme(aspect.ratio = 1)
+
+smoker_stage_forest <- smoker_stage_forest + 
+  xlim(x_min, x_max) + 
+  xlab("log2(Odds Ratio)") +
+  theme(aspect.ratio = 1)
+
+smoker_metastasis_forest <- smoker_metastasis_forest + 
+  xlim(x_min, x_max) + 
+  xlab("log2(Odds Ratio)") +
+  theme(aspect.ratio = 1)
+
+# Make a spacer plot that has the same dimensions as the other plots
+empty_plot <- ggplot() + 
+  theme_void() + 
+  theme(aspect.ratio = 1)
+
+
+design <- "
+  ABC
+  DEF
+"
+
+combined_plot <- stage_forest + metastasis_forest + passive_forest + 
+  smoker_stage_forest + smoker_metastasis_forest + empty_plot +
+  plot_layout(design = design) 
+
+print(combined_plot)
+
+```
+
+```{r SUPP. FIGURE 4 -- STAGE & METASTASIS & PASSIVE SMOKING FOR LUAD ONLY}
+
+#STAGE FIRST
+data <- read.csv("../data/log-reg-table5.tsv", sep="\t")
+
+data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis, Stage_recoded)
+
+#remove parentheses from Stage_recoded column
+data$Stage_recoded <- gsub("Stage\\((I+)\\-(I+V*)\\)", "Stage \\1-\\2", data$Stage_recoded)
+
+#remove rows with "Unknown from stage column
+data <- dplyr::filter(data, Stage_recoded != "Unknown")
+
+metadata = read.csv("../metadata/sherlock_1217_metadata", sep = '\t', header=TRUE)
+
+merged <- merge(data, metadata, by = "Tumor_Barcode")
+merged <- dplyr::filter(merged, Smoking=="Non-Smoker")
+merged <- dplyr::filter(merged, Histology=="Adenocarcinoma")
+
+merged[merged == ''] <- NA
+merged <- merged %>%
+  mutate(ecDNA_status = if_else(is.na(ecDNA_status), 1, ecDNA_status))
+
+merged$Ancestry <- merged$Assigned_Population
+merged$Ancestry[merged$Ancestry == 'AFR'] <- "Other"
+merged$Ancestry[merged$Ancestry == "AMR or Mixed"] <- "Other"
+merged$Smoking[merged$Smoking == 'Unknown'] <- "Non-Smoker"
+#merged
+merged$Histology[merged$Histology == 'Adenosquamous carcinoma'] <- "Other"
+merged$Histology[merged$Histology == 'Others'] <- "Other"
+merged$Histology[merged$Histology == 'Squamous cell carcinoma'] <- "LUSC"
+merged$Histology[merged$Histology == 'Adenocarcinoma'] <- "LUAD"
+merged$Histology[merged$Histology == 'Carcinoid tumor'] <- "Carcinoid"
+
+
+
+merged$Histology <- merged$Histology %>% as.factor()
+
+
+merged$Stage <- merged$Stage3 %>% as.factor()
+merged$Stage <- relevel(merged$Stage, ref = "Early Stage(I)")
+
+merged$Ancestry <- merged$Ancestry %>% as.factor()
+merged$Ancestry <- relevel(merged$Ancestry, ref = "EUR")
+
+merged$Gender <- merged$Gender %>% as.factor()
+merged$Gender <- relevel(merged$Gender, ref="Male")
+
+
+merged$Recurrence <- merged$Recurrence.y %>% as.factor()
+merged$Recurrence <- relevel(merged$Recurrence, ref="No")
+
+merged$Metastasis <- merged$Metastasis.y %>% as.factor()
+merged$Metastasis <- relevel(merged$Metastasis, ref="No")
+
+merged$Stage_recoded <- merged$Stage_recoded %>% as.factor()
+merged$Stage_recoded <- relevel(merged$Stage_recoded, ref="Stage I-II")
+
+
+#NOW ADD STAGE
+model_stage <- glm(ecDNA_status ~ Gender + purity + Age + Ancestry + Stage_recoded, data = merged, family = binomial(link = "logit"))
+
+CI <- confint2(
+  model_stage,
+  level = 0.9,
+  test = c("lr"),
+  digits = max(3, getOption("digits") - 2),
+  verbose = TRUE
+)
+
+coefficients <- as.data.frame(tidy(model_stage))
+
+coefficients$Corrected.p.value <- p.adjust(coefficients$p.value, method="fdr")
+coefficients$Odds <- exp(coefficients$estimate)
+coefficients$Lower.CI <- exp(CI[,1])
+coefficients$Upper.CI <- exp(CI[,2])
+coefficients$Features <- coefficients$term
+
+result_stage <- coefficients %>% mutate_if(is.numeric, round, digits=2)
+result_stage <- result_stage %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+
+#remove first row from results
+result_stage <- dplyr::filter(result_stage, Features!="(Intercept)")
+
+#add map for stage
+map <- list(
+    "GenderFemale" = "Sex:Female (Ref=Male)",
+    "purity" = "Purity",
+    "Age" = "Age",
+    "HistologyLUSC" = "Histology:LUSC (Ref=LUAD)",
+    "HistologyOther" = "Histology:Other (Ref=LUAD)",
+    "HistologyCarcinoid" = "Histology:Carcinoid (Ref=LUAD)",
+    "AncestryEAS" = "Ancestry:EAS (Ref=EUR)",
+    "AncestryOther" = "Ancestry:Other (Ref=EUR)",
+    "Stage_recodedStage III-IV" = "Stage III-IV (Ref=Stage I-II)"
+)
+
+result_stage$Features <- unlist(map[result_stage$Features])
+
+#sort by lowest to highest Corrected.p.value
+result_stage <- result_stage[order(result_stage$Corrected.p.value),]
+
+result_stage$Features <- gsub("(\\(Ref)", "\n\\1", result_stage$Features)
+
+# Define the desired order of features
+feature_order <- c(
+  "Stage III-IV \n(Ref=Stage I-II)",
+  "Sex:Female \n(Ref=Male)",
+  "Purity",
+  "Histology:LUSC \n(Ref=LUAD)",
+  "Histology:Other \n(Ref=LUAD)",
+  "Histology:Carcinoid \n(Ref=LUAD)",
+  "Ancestry:Other \n(Ref=EUR)",
+  "Ancestry:EAS \n(Ref=EUR)",
+  "Age"
+)
+
+feature_order <- rev(feature_order)
+
+#remove Purity 
+result_stage <- dplyr::filter(result_stage, Features!="Purity")
+
+stage_forest <- create_forest_plot(result_stage, map, highlight_var = "Stage III-IV \n(Ref=Stage I-II)", feature_order=feature_order)
+
+
+#NOW METASTASIS
+data <- read.csv("..data/log-reg-table5.tsv", sep="\t")
+data <- data[data$Histology == "Adenocarcinoma", ]
+data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis)
+
+metadata = read.csv("../metadata/sherlock_1217_metadata", sep = '\t', header=TRUE)
+
+merged <- merge(data, metadata, by = "Tumor_Barcode")
+merged <- dplyr::filter(merged, Smoking=="Non-Smoker")
+
+#filter for adenocarcinoma
+merged <- dplyr::filter(merged, Histology=="Adenocarcinoma")
+
+merged[merged == ''] <- NA
+merged <- merged %>%
+  mutate(ecDNA_status = if_else(is.na(ecDNA_status), 1, ecDNA_status))
+
+merged$Ancestry <- merged$Assigned_Population
+merged$Ancestry[merged$Ancestry == 'AFR'] <- "Other"
+merged$Ancestry[merged$Ancestry == "AMR or Mixed"] <- "Other"
+merged$Smoking[merged$Smoking == 'Unknown'] <- "Non-Smoker"
+#merged
+merged$Histology[merged$Histology == 'Adenosquamous carcinoma'] <- "Other"
+merged$Histology[merged$Histology == 'Others'] <- "Other"
+merged$Histology[merged$Histology == 'Squamous cell carcinoma'] <- "LUSC"
+merged$Histology[merged$Histology == 'Adenocarcinoma'] <- "LUAD"
+merged$Histology[merged$Histology == 'Carcinoid tumor'] <- "Carcinoid"
+
+#SET REFERENCE VARIABLES
+merged$Passive_Smoking <- merged$Passive_Smoking %>% as.factor()
+merged$Passive_Smoking <- relevel(merged$Passive_Smoking, ref = "No")
+
+merged$Histology <- merged$Histology %>% as.factor()
+
+
+merged$Stage <- merged$Stage3 %>% as.factor()
+merged$Stage <- relevel(merged$Stage, ref = "Early Stage(I)")
+
+merged$Ancestry <- merged$Ancestry %>% as.factor()
+merged$Ancestry <- relevel(merged$Ancestry, ref = "EUR")
+
+merged$Gender <- merged$Gender %>% as.factor()
+merged$Gender <- relevel(merged$Gender, ref="Male")
+
+# merged$therapy <- merged$therapy %>% as.factor()
+# merged$therapy <- relevel(merged$therapy, ref="No")
+
+merged$Recurrence <- merged$Recurrence.y %>% as.factor()
+merged$Recurrence <- relevel(merged$Recurrence, ref="No")
+
+merged$Metastasis <- merged$Metastasis.y %>% as.factor()
+merged$Metastasis <- relevel(merged$Metastasis, ref="No")
+
+
+model_metastasis <- glm(ecDNA_status ~ Gender + purity + Age + Ancestry + Metastasis, data = merged, family = binomial(link = "logit"))
+
+CI <- confint2(
+  model_metastasis,
+  level = 0.9,
+  test = c("lr"),
+  digits = max(3, getOption("digits") - 2),
+  verbose = TRUE
+)
+
+coefficients <- as.data.frame(tidy(model_metastasis))
+
+coefficients$Corrected.p.value <- p.adjust(coefficients$p.value, method="fdr")
+coefficients$Odds <- exp(coefficients$estimate)
+coefficients$Lower.CI <- exp(CI[,1])
+coefficients$Upper.CI <- exp(CI[,2])
+coefficients$Features <- coefficients$term
+
+result_metastasis <- coefficients %>% mutate_if(is.numeric, round, digits=2)
+result_metastasis <- result_metastasis %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+
+#remove first row from results
+result_metastasis <- dplyr::filter(result_metastasis, Features!="(Intercept)")
+
+#add map for stage
+map <- list(
+    "GenderFemale" = "Sex:Female (Ref=Male)",
+    "purity" = "Purity",
+    "Age" = "Age",
+    "HistologyLUSC" = "Histology:LUSC (Ref=LUAD)",
+    "HistologyOther" = "Histology:Other (Ref=LUAD)",
+    "HistologyCarcinoid" = "Histology:Carcinoid (Ref=LUAD)",
+    "AncestryEAS" = "Ancestry:EAS (Ref=EUR)",
+    "AncestryOther" = "Ancestry:Other (Ref=EUR)",
+    "MetastasisYes" = "Metastasis:Yes (Ref=No)"
+)
+
+result_metastasis$Features <- unlist(map[result_metastasis$Features])
+
+#sort by lowest to highest Corrected.p.value
+result_metastasis <- result_metastasis[order(result_metastasis$Corrected.p.value),]
+
+result_metastasis$Features <- gsub("(\\(Ref)", "\n\\1", result_metastasis$Features)
+
+# Define the desired order of features
+feature_order <- c(
+  "Metastasis:Yes \n(Ref=No)",
+  "Sex:Female \n(Ref=Male)",
+  "Purity",
+  "Histology:LUSC \n(Ref=LUAD)",
+  "Histology:Other \n(Ref=LUAD)",
+  "Histology:Carcinoid \n(Ref=LUAD)",
+  "Ancestry:Other \n(Ref=EUR)",
+  "Ancestry:EAS \n(Ref=EUR)",
+  "Age"
+)
+
+feature_order <- rev(feature_order)
+result_metastasis <- dplyr::filter(result_metastasis, Features!="Purity")
+
+metastasis_forest <- create_forest_plot(result_metastasis, map, highlight_var = "Metastasis:Yes \n(Ref=No)", feature_order=feature_order)
+
+
+
+#NOW PASSIVE SMOKING
+data <- read.csv("..data/log-reg-table5.tsv", sep="\t")
+data <- data[data$Histology == "Adenocarcinoma", ]
+data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis)
+
+metadata = read.csv("../metadata/sherlock_1217_metadata", sep = '\t', header=TRUE)
+
+merged <- merge(data, metadata, by = "Tumor_Barcode")
+merged <- dplyr::filter(merged, Smoking=="Non-Smoker")
+#merged <- dplyr::filter(merged, Histology=="Adenocarcinoma")
+
+merged[merged == ''] <- NA
+merged <- merged %>%
+  mutate(ecDNA_status = if_else(is.na(ecDNA_status), 1, ecDNA_status))
+
+merged$Ancestry <- merged$Assigned_Population
+merged$Ancestry[merged$Ancestry == 'AFR'] <- "Other"
+merged$Ancestry[merged$Ancestry == "AMR or Mixed"] <- "Other"
+merged$Smoking[merged$Smoking == 'Unknown'] <- "Non-Smoker"
+#merged
+merged$Histology[merged$Histology == 'Adenosquamous carcinoma'] <- "Other"
+merged$Histology[merged$Histology == 'Others'] <- "Other"
+merged$Histology[merged$Histology == 'Squamous cell carcinoma'] <- "LUSC"
+merged$Histology[merged$Histology == 'Adenocarcinoma'] <- "LUAD"
+merged$Histology[merged$Histology == 'Carcinoid tumor'] <- "Carcinoid"
+
+#SET REFERENCE VARIABLES
+merged$Passive_Smoking <- merged$Passive_Smoking %>% as.factor()
+merged$Passive_Smoking <- relevel(merged$Passive_Smoking, ref = "No")
+
+
+merged$Stage <- merged$Stage3 %>% as.factor()
+merged$Stage <- relevel(merged$Stage, ref = "Early Stage(I)")
+
+merged$Ancestry <- merged$Ancestry %>% as.factor()
+merged$Ancestry <- relevel(merged$Ancestry, ref = "EUR")
+
+merged$Gender <- merged$Gender %>% as.factor()
+merged$Gender <- relevel(merged$Gender, ref="Male")
+
+# merged$therapy <- merged$therapy %>% as.factor()
+# merged$therapy <- relevel(merged$therapy, ref="No")
+
+merged$Recurrence <- merged$Recurrence.y %>% as.factor()
+merged$Recurrence <- relevel(merged$Recurrence, ref="No")
+
+merged$Metastasis <- merged$Metastasis.y %>% as.factor()
+merged$Metastasis <- relevel(merged$Metastasis, ref="No")
+
+
+model_passive <- glm(ecDNA_status ~ Gender + purity + Age + Ancestry + Passive_Smoking, data = merged, family = binomial(link = "logit"))
+
+CI <- confint2(
+  model_passive,
+  level = 0.9,
+  test = c("lr"),
+  digits = max(3, getOption("digits") - 2),
+  verbose = TRUE
+)
+
+coefficients <- as.data.frame(tidy(model_passive))
+
+coefficients$Corrected.p.value <- p.adjust(coefficients$p.value, method="fdr")
+coefficients$Odds <- exp(coefficients$estimate)
+coefficients$Lower.CI <- exp(CI[,1])
+coefficients$Upper.CI <- exp(CI[,2])
+coefficients$Features <- coefficients$term
+
+result_passive <- coefficients %>% mutate_if(is.numeric, round, digits=2)
+result_passive <- result_passive %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+
+#remove first row from results
+result_passive <- dplyr::filter(result_passive, Features!="(Intercept)")
+
+result_passive$Lower.CI[result_passive$Lower.CI == 0] <- 2^-3
+result_passive$Odds[result_passive$Odds == 0] <- 2^-2
+
+#add map for stage
+map <- list(
+    "GenderFemale" = "Sex:Female (Ref=Male)",
+    "purity" = "Purity",
+    "Age" = "Age",
+    "HistologyLUSC" = "Histology:LUSC (Ref=LUAD)",
+    "HistologyOther" = "Histology:Other (Ref=LUAD)",
+    "HistologyCarcinoid" = "Histology:Carcinoid (Ref=LUAD)",
+    "AncestryEAS" = "Ancestry:EAS (Ref=EUR)",
+    "AncestryOther" = "Ancestry:Other (Ref=EUR)",
+    "Passive_SmokingYes" = "Passive Smoking:Yes (Ref=No)"
+)
+
+result_passive$Features <- unlist(map[result_passive$Features])
+
+
+# Set the order of the Features
+
+result_passive$Features <- gsub("(\\(Ref)", "\n\\1", result_passive$Features)
+
+# Define the desired order of features
+feature_order <- c(
+  "Passive Smoking:Yes \n(Ref=No)",
+  "Sex:Female \n(Ref=Male)",
+  "Purity",
+  "Histology:LUSC \n(Ref=LUAD)",
+  "Histology:Other \n(Ref=LUAD)",
+  "Histology:Carcinoid \n(Ref=LUAD)",
+  "Ancestry:Other \n(Ref=EUR)",
+  "Ancestry:EAS \n(Ref=EUR)",
+  "Age"
+)
+
+feature_order <- rev(feature_order)
+
+#change value for Histology:Carcinoid \n(Ref=LUAD) row and Upper.CI collumn to 0.73 if Inf
+result_passive$Upper.CI[result_passive$Features == "Histology:Carcinoid \n(Ref=LUAD)"] <- 0.73
+
+result_passive <- dplyr::filter(result_passive, Features!="Purity")
+
+passive_forest <- create_forest_plot(result_passive, map, highlight_var = "Passive Smoking:Yes \n(Ref=No)", feature_order=feature_order)
+
+
+#NOW SMOKERS
+
+data <- read.csv("..data/log-reg-table5.tsv", sep="\t")
+data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis, Stage_recoded)
+
+#remove parentheses from Stage_recoded column
+data$Stage_recoded <- gsub("Stage\\((I+)\\-(I+V*)\\)", "Stage \\1-\\2", data$Stage_recoded)
+
+#remove rows with "Unknown from stage column
+data <- dplyr::filter(data, Stage_recoded != "Unknown")
+
+metadata = read.csv("../metadata/sherlock_1217_metadata", sep = '\t', header=TRUE)
+
+merged <- merge(data, metadata, by = "Tumor_Barcode")
+merged <- dplyr::filter(merged, Smoking=="Smoker")
+merged <- dplyr::filter(merged, Histology=='Adenocarcinoma')
+
+merged[merged == ''] <- NA
+merged <- merged %>%
+  mutate(ecDNA_status = if_else(is.na(ecDNA_status), 1, ecDNA_status))
+
+merged$Ancestry <- merged$Assigned_Population
+merged$Ancestry[merged$Ancestry == 'AFR'] <- "Other"
+merged$Ancestry[merged$Ancestry == "AMR or Mixed"] <- "Other"
+merged$Smoking[merged$Smoking == 'Unknown'] <- "Non-Smoker"
+#merged
+merged$Histology[merged$Histology == 'Adenosquamous carcinoma'] <- "Other"
+merged$Histology[merged$Histology == 'Others'] <- "Other"
+merged$Histology[merged$Histology == 'Squamous cell carcinoma'] <- "LUSC"
+merged$Histology[merged$Histology == 'Adenocarcinoma'] <- "LUAD"
+merged$Histology[merged$Histology == 'Carcinoid tumor'] <- "Carcinoid"
+
+#SET REFERENCE VARIABLES
+
+merged$Stage <- merged$Stage3 %>% as.factor()
+merged$Stage <- relevel(merged$Stage, ref = "Early Stage(I)")
+
+merged$Ancestry <- merged$Ancestry %>% as.factor()
+merged$Ancestry <- relevel(merged$Ancestry, ref = "EUR")
+
+merged$Gender <- merged$Gender %>% as.factor()
+merged$Gender <- relevel(merged$Gender, ref="Male")
+
+
+merged$Metastasis <- merged$Metastasis.y %>% as.factor()
+merged$Metastasis <- relevel(merged$Metastasis, ref="No")
+
+merged$Stage_recoded <- merged$Stage_recoded %>% as.factor()
+merged$Stage_recoded <- relevel(merged$Stage_recoded, ref="Stage I-II")
+
+#NOW ADD STAGE
+model_stage <- glm(ecDNA_status ~ Gender + purity + Age + Stage_recoded, data = merged, family = binomial(link = "logit"))
+
+CI <- confint2(
+  model_stage,
+  level = 0.9,
+  test = c("lr"),
+  digits = max(3, getOption("digits") - 2),
+  verbose = TRUE
+)
+
+coefficients <- as.data.frame(tidy(model_stage))
+
+coefficients$Corrected.p.value <- p.adjust(coefficients$p.value, method="fdr")
+coefficients$Odds <- exp(coefficients$estimate)
+coefficients$Lower.CI <- exp(CI[,1])
+coefficients$Upper.CI <- exp(CI[,2])
+coefficients$Features <- coefficients$term
+
+result_stage <- coefficients %>% dplyr::mutate_if(is.numeric, round, digits=2)
+result_stage <- result_stage %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+
+#remove first row from results
+result_stage <- dplyr::filter(result_stage, Features!="(Intercept)")
+
+map <- list(
+    "GenderFemale" = "Sex:Female (Ref=Male)",
+    "purity" = "Purity",
+    "Age" = "Age",
+    "HistologyLUSC" = "Histology:LUSC (Ref=LUAD)",
+    "HistologyOther" = "Histology:Other (Ref=LUAD)",
+    "Stage_recodedStage III-IV" = "Stage III-IV (Ref=Stage I-II)"
+)
+
+
+# First map the features
+result_stage$Features <- unlist(map[result_stage$Features])
+
+result_stage$Features <- gsub("(\\(Ref)", "\n\\1", result_stage$Features)
+
+# For stage plot, use this feature order
+feature_order <- c(
+  "Stage III-IV \n(Ref=Stage I-II)",  
+  "Sex:Female \n(Ref=Male)",
+  "Purity",
+  "Histology:LUSC \n(Ref=LUAD)",
+  "Histology:Other \n(Ref=LUAD)",
+  "Age"
+)
+
+
+feature_order <- rev(feature_order)
+
+# #replace all infinity values with 13.54 in result dataframe
+# result_stage[result_stage == Inf] <- 13.54
+
+#remove Purity
+result_stage <- dplyr::filter(result_stage, Features!="Purity")
+# Create the forest plot
+smoker_stage_forest <- create_forest_plot(
+    result_stage, 
+    map, 
+    highlight_var = "Stage III-IV \n(Ref=Stage I-II)", 
+    feature_order = feature_order
+)
+
+
+#METASTASIS
+data <- read.csv("..data/log-reg-table5.tsv", sep="\t")
+data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis)
+
+metadata = read.csv("../metadata/sherlock_1217_metadata", sep = '\t', header=TRUE)
+
+merged <- merge(data, metadata, by = "Tumor_Barcode")
+merged <- dplyr::filter(merged, Smoking=="Smoker")
+#adeno only
+merged <- dplyr::filter(merged, Histology=="Adenocarcinoma")
+
+merged[merged == ''] <- NA
+merged <- merged %>%
+  mutate(ecDNA_status = if_else(is.na(ecDNA_status), 1, ecDNA_status))
+
+merged$Ancestry <- merged$Assigned_Population
+merged$Ancestry[merged$Ancestry == 'AFR'] <- "Other"
+merged$Ancestry[merged$Ancestry == "AMR or Mixed"] <- "Other"
+merged$Smoking[merged$Smoking == 'Unknown'] <- "Non-Smoker"
+#merged
+merged$Histology[merged$Histology == 'Adenosquamous carcinoma'] <- "Other"
+merged$Histology[merged$Histology == 'Others'] <- "Other"
+merged$Histology[merged$Histology == 'Squamous cell carcinoma'] <- "LUSC"
+merged$Histology[merged$Histology == 'Adenocarcinoma'] <- "LUAD"
+merged$Histology[merged$Histology == 'Carcinoid tumor'] <- "Carcinoid"
+
+#SET REFERENCE VARIABLES
+
+merged$Stage <- merged$Stage3 %>% as.factor()
+merged$Stage <- relevel(merged$Stage, ref = "Early Stage(I)")
+
+merged$Ancestry <- merged$Ancestry %>% as.factor()
+merged$Ancestry <- relevel(merged$Ancestry, ref = "EUR")
+
+merged$Gender <- merged$Gender %>% as.factor()
+merged$Gender <- relevel(merged$Gender, ref="Male")
+
+
+merged$Metastasis <- merged$Metastasis.y %>% as.factor()
+merged$Metastasis <- relevel(merged$Metastasis, ref="No")
+
+merged <- merged %>% filter(!is.na(Metastasis))
+
+model_metastasis <- glm(ecDNA_status ~ Gender + purity + Age + Metastasis, data = merged, family = binomial(link = "logit"))
+
+CI <- confint2(
+  model_metastasis,
+  level = 0.9,
+  test = c("lr"),
+  digits = max(3, getOption("digits") - 2),
+  verbose = TRUE
+)
+
+coefficients <- as.data.frame(tidy(model_metastasis))
+
+coefficients$Corrected.p.value <- p.adjust(coefficients$p.value, method="fdr")
+coefficients$Odds <- exp(coefficients$estimate)
+coefficients$Lower.CI <- exp(CI[,1])
+coefficients$Upper.CI <- exp(CI[,2])
+coefficients$Features <- coefficients$term
+
+result_metastasis <- coefficients %>% mutate_if(is.numeric, round, digits=2)
+result_metastasis <- result_metastasis %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+
+#remove first row from results
+result_metastasis <- dplyr::filter(result_metastasis, Features!="(Intercept)")
+
+#add map for stage
+map <- list(
+    "GenderFemale" = "Sex:Female (Ref=Male)",
+    "purity" = "Purity",
+    "Age" = "Age",
+    "HistologyLUSC" = "Histology:LUSC (Ref=LUAD)",
+    "HistologyOther" = "Histology:Other (Ref=LUAD)",
+    "MetastasisYes" = "Metastasis:Yes (Ref=No)"
+)
+
+
+result_metastasis$Features <- unlist(map[result_metastasis$Features])
+
+#sort by lowest to highest Corrected.p.value
+result_metastasis <- result_metastasis[order(result_metastasis$Corrected.p.value),]
+
+result_metastasis$Features <- gsub("(\\(Ref)", "\n\\1", result_metastasis$Features)
+
+feature_order <- c(
+  "Metastasis:Yes \n(Ref=No)",
+  "Sex:Female \n(Ref=Male)",
+  "Purity",
+  "Histology:LUSC \n(Ref=LUAD)",
+  "Histology:Other \n(Ref=LUAD)",
+  "Age"
+)
+
+feature_order <- rev(feature_order)
+
+#remove Purity
+result_metastasis <- dplyr::filter(result_metastasis, Features!="Purity")
+
+smoker_metastasis_forest <- create_forest_plot(result_metastasis, map, highlight_var = "Metastasis:Yes \n(Ref=No)", feature_order=feature_order)
+
+
+#COMBINE ALL THE PLOTS
+# Load required package
+library(patchwork)
+library(ggplot2)
+
+# # Force all plots to have the same dimensions
+stage_forest <- stage_forest + theme(aspect.ratio = 2)
+metastasis_forest <- metastasis_forest + theme(aspect.ratio = 2)
+passive_forest <- passive_forest + theme(aspect.ratio = 2)
+
+smoker_stage_forest <- smoker_stage_forest + theme(aspect.ratio = 2)
+smoker_metastasis_forest <- smoker_metastasis_forest + theme(aspect.ratio = 2)
+
+combined_plot_ns <- plot_grid(
+  stage_forest, metastasis_forest, passive_forest, 
+  ncol = 3 # Add labels
+)
+
+combined_plot_s <- plot_grid(
+  smoker_stage_forest, smoker_metastasis_forest, 
+  ncol = 2
+)
+
+
+
+# Ensure all plots have the same x-axis limits
+x_min <- -6  
+x_max <- 6  
+
+# Apply consistent x-axis limits to all plots
+stage_forest <- stage_forest + 
+  xlim(x_min, x_max) + 
+  xlab("log2(Odds Ratio)") +
+  theme(aspect.ratio = 1)
+
+metastasis_forest <- metastasis_forest + 
+  xlim(x_min, x_max) + 
+  xlab("log2(Odds Ratio)") +
+  theme(aspect.ratio = 1)
+
+passive_forest <- passive_forest + 
+  xlim(x_min, x_max) + 
+  xlab("log2(Odds Ratio)") +
+  theme(aspect.ratio = 1)
+
+smoker_stage_forest <- smoker_stage_forest + 
+  xlim(x_min, x_max) + 
+  xlab("log2(Odds Ratio)") +
+  theme(aspect.ratio = 1)
+
+smoker_metastasis_forest <- smoker_metastasis_forest + 
+  xlim(x_min, x_max) + 
+  xlab("log2(Odds Ratio)") +
+  theme(aspect.ratio = 1)
+
+# Make a spacer plot that has the same dimensions as the other plots
+empty_plot <- ggplot() + 
+  theme_void() + 
+  theme(aspect.ratio = 1)
+
+
+design <- "
+  ABC
+  DEF
+"
+
+combined_plot <- stage_forest + metastasis_forest + passive_forest + 
+  smoker_stage_forest + smoker_metastasis_forest + empty_plot +
+  plot_layout(design = design) 
+
+
+print(combined_plot)
+
+```
+
+
+```{r SUPP. FIGURE 5B -- Genomic Features for LUAD Volcano Plot}
+
+setwd("/Users/azhark/iCloud/dev/Sherlock-Lung-ecDNA-backup/scripts")
+
+run_logistic_regression <- function(feature, data, smoking = FALSE, wgII=TRUE) {
+  
+  base_formula <- paste("ecDNA. ~", feature, "+ Gender + Tumor_Purity + Age + Ancestry")# + Histology")
+  #base_formula <- paste("BFB. ~", feature, "+ Gender + Tumor_Purity + Age + Ancestry + Histology")
+  
+  # Include the Smoking variable in the formula if smoking is TRUE
+  if (smoking) {
+    formula <- as.formula(paste(base_formula, "+ Smoking"))
+  } else {
+    formula <- as.formula(base_formula)
+  }
+  
+  # Include the Smoking variable in the formula if smoking is TRUE
+  if (wgII) {
+    formula <- as.formula(paste(base_formula, "+ wGII"))
+  } else {
+    formula <- as.formula(base_formula)
+  }
+  
+  
+  # Fit the logistic regression model
+  model <- glm(formula, data = data, family = binomial)
+  
+  # Check model fit
+  if (summary(model)$deviance == 0) {
+    warning(paste("Model fitting failed for", feature, "due to perfect separation"))
+    return(NULL)
+  }
+  
+  # Extract model summary
+  tidy_model <- tidy(model)
+  
+  CI <- confint2(
+    model,
+    level = 0.9,
+    test = c("lr"),
+    digits = max(3, getOption("digits") - 2),
+    verbose = TRUE
+  )
+  
+  tidy_model$Lower.CI <- exp(CI[,1])
+  tidy_model$Upper.CI <- exp(CI[,2])
+  
+  tidy_model$Odds <- exp(tidy_model$estimate)
+  # Adjust p-values using FDR
+  tidy_model$fdr <- p.adjust(tidy_model$p.value, method = "fdr")
+
+# Round all columns except for fdr to 2 decimal places
+# tidy_model <- tidy_model %>%
+#   mutate(
+#     across(c(estimate, std.error, statistic, p.value, Lower.CI, Upper.CI, Odds), round, 2),
+#     fdr = formatC(fdr, format = "e", digits = 2)
+#   )
+  
+  safe_feature <- gsub("[^A-Za-z0-9._-]+", "_", feature)
+# write.table(
+#     tidy_model,
+#     sprintf("/Users/azhark/Documents/dev/Sherlock-Lung/results2/never-smokers-models/wgII_included/%s_MEDIAN_wgII_included.tsv", ... = safe_feature),
+#   row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t"
+#   )
+  
+  # Filter for the row corresponding to the feature of interest using string matching
+  feature_row <- tidy_model %>%
+    filter(str_detect(term, feature))
+  
+  
+  
+  # Return the summary filtered for the gene term
+  return(as.data.frame(feature_row))
+  
+}
+
+create_volcano_plot <- function(data, plot_title, plot_subtitle) {
+  
+  # Your data already has the right columns: term, fdr, Odds
+  # Make a copy to avoid modifying original data
+  plot_data <- data
+  
+  # Rename term to Features for consistency
+  plot_data$Features <- plot_data$term
+  
+  # Remove rows with missing or invalid values
+  plot_data <- plot_data %>%
+    filter(!is.na(fdr) & !is.na(Odds) & fdr > 0 & Odds > 0) %>%
+    filter(is.finite(fdr) & is.finite(Odds))
+  
+  # Calculate -log10(fdr) and log2(Odds Ratio) for plotting
+  plot_data <- plot_data %>%
+    mutate(
+      log_q = -log10(fdr), 
+      log_or = log2(Odds)
+    ) %>%
+    filter(is.finite(log_q) & is.finite(log_or))
+  
+  # Calculate plot limits based on your actual data
+  x_range <- range(plot_data$log_or, na.rm = TRUE)
+  x_limit <- max(abs(x_range)) * 1.3
+  y_max <- max(plot_data$log_q, na.rm = TRUE) * 1.2
+  
+  # Feature name mapping based on your actual data
+  feature_map <- setNames(
+    c("WGD", 
+      "Telomere T/N Ratio", 
+      "TMB",
+      "MT Copy Number",
+      "Chromothripsis",
+      "L1 Retrotransposon"),
+    c("WGD_Status", 
+      "Telseq_TL_Ratio_median",
+      "TMB_median",
+      "mt_copy_number_median",
+      "Chromothripsis",
+      "L1_binary")
+  )
+  
+  # Apply feature mapping
+  plot_data$Features <- ifelse(plot_data$Features %in% names(feature_map), 
+                              feature_map[plot_data$Features], 
+                              plot_data$Features)
+  
+  # Print diagnostics
+  cat("Volcano plot data summary:\n")
+  cat("Number of points:", nrow(plot_data), "\n")
+  cat("Features:", paste(plot_data$Features, collapse = ", "), "\n")
+  cat("X-axis range (log2 OR):", round(range(plot_data$log_or), 2), "\n")
+  cat("Y-axis range (-log10 FDR):", round(range(plot_data$log_q), 2), "\n")
+  cat("Plot limits - X:", round(c(-x_limit, x_limit), 2), "Y:", round(c(0, y_max), 2), "\n")
+  
+  # Create the volcano plot
+  volcano_plot <- plot_data %>% 
+    ggplot(aes(x = log_or, y = log_q)) +
+    geom_hline(yintercept = -log10(0.05), col = "red", linetype = 2, alpha = 0.7) +
+    geom_hline(yintercept = -log10(0.01), col = "blue", linetype = 2, alpha = 0.7) +
+    geom_vline(xintercept = 0, col = "gray30", linetype = 1, linewidth = 0.5) +
+    geom_point(pch = 21, size = 3.5, col = 'black', stroke = 0.3, fill = 'black') +
+    ggrepel::geom_text_repel(
+      aes(label = Features),
+      color = "black",
+      force = 15,
+      box.padding = 0.6,
+      point.padding = 0.3,
+      min.segment.length = 0,
+      max.overlaps = Inf,
+      size = 3,
+      segment.color = "gray50",
+      segment.size = 0.3,
+      seed = 42  # For reproducible label positioning
+    ) +
+    scale_x_continuous(
+      breaks = scales::pretty_breaks(n = 6),
+      limits = c(-x_limit, x_limit),
+      expand = expansion(mult = 0.02)
+    ) +
+    scale_y_continuous(
+      breaks = scales::pretty_breaks(n = 6),
+      limits = c(0, y_max),
+      expand = expansion(mult = c(0, 0.02))
+    ) +
+    theme_bw(base_size = 12) +
+    theme(
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.line = element_line(color = "black", linewidth = 0.5),
+      axis.text = element_text(color = "black", size = 10),
+      axis.title = element_text(color = "black", face = "bold", size = 12),
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold", margin = margin(b = 10)),
+      plot.subtitle = element_text(hjust = 0.5, size = 11, color = "gray20", margin = margin(b = 15)),
+      plot.margin = margin(t = 20, r = 20, b = 15, l = 15),
+      panel.border = element_rect(color = 'black', linewidth = 0.8, fill = NA)
+    ) +
+    labs(
+      x = expression(log[2]~"(Odds Ratio)"), 
+      y = expression(-log[10]~"(FDR)"),
+      title = plot_title, 
+      subtitle = plot_subtitle
+    ) +
+    coord_cartesian(clip = 'off')
+  
+  return(volcano_plot)
+}
+
+setwd("/Users/azhark/iCloud/dev/Sherlock-Lung-ecDNA-backup/scripts")
+data <- read.csv("../data/log-reg-table5.tsv", sep="\t")
+
+#make tumor purity column above/below median 
+data$Tumor_Purity_median <- ifelse(data$Tumor_Purity > median(data$Tumor_Purity, na.rm = TRUE), "High", "Low")
+
+
+#non-smokers only
+data = data %>% filter(Smoking == "Non-Smoker")
+
+#adeno only
+data = data %>% filter(Histology == "Adenocarcinoma")
+
+genomic = data %>% select(WGD_Status, Telseq_TL_Ratio_median, TMB_median, mt_copy_number_median, Chromothripsis, L1_binary)
+features = c("WGD_Status", "Telseq_TL_Ratio_median", "TMB_median", "mt_copy_number_median", "Chromothripsis", "L1_binary")
+
+# genomic = data %>% select(WGD_Status, Telseq_TL_Ratio, TMB, mt_copy_number, Chromothripsis, L1_binary)
+# features = c("WGD_Status", "Telseq_TL_Ratio", "TMB", "mt_copy_number", "Chromothripsis", "L1_binary")
+
+data$WGD_Status = relevel(factor(data$WGD_Status), ref = 'nWGD')
+data$ecDNA. = relevel(factor(data$ecDNA.), ref = 'ecDNA-')
+
+data$Gender = relevel(factor(data$Gender), ref = 'Female')
+data$Histology = relevel(factor(data$Histology), ref = 'Adenocarcinoma')
+
+data$L1_binary <- factor(data$L1_binary)
+data$L1_binary <- relevel(data$L1_binary, ref = "LINE1 Absent")
+# Initialize a list to store results
+results_list <- list()
+
+# Iterate through each feature and perform logistic regression
+for (feature in features) {
+  print(paste("Running logistic regression for", feature))
+  #if feature is categorical, print the number in each category
+  if (is.factor(data[[feature]])) {
+    print(table(data[[feature]]))
+  }
+  model_summary <- run_logistic_regression(feature, data, smoking = FALSE, wgII=FALSE)
+  #select just the row that contains the string with the feature
+  
+  
+  model_summary$term <- feature
+  #add to results list
+  results_list[[feature]] <- model_summary
+
+  
+}
+
+# Combine results into a single dataframe for the current min_cases
+results_summary <- bind_rows(results_list)
+
+results_summary$Odds <- exp(results_summary$estimate)
+# Adjust p-values using FDR
+results_summary$fdr <- p.adjust(results_summary$p.value, method = "fdr")
+
+results_summary$Annotation <- ifelse(
+  grepl("hypoxia|mt_copy_number|TMB|Telseq", results_summary$term),
+  "Numeric",
+  "Categorical"
+)
+
+numeric_results <- results_summary[results_summary$Annotation == "Numeric", ]
+categorical_results <- results_summary[results_summary$Annotation == "Categorical", ]
+
+if (nrow(numeric_results) > 0) {
+  numeric_results$fdr_separate <- p.adjust(numeric_results$p.value, method = "fdr")
+}
+
+if (nrow(categorical_results) > 0) {
+  categorical_results$fdr_separate <- p.adjust(categorical_results$p.value, method = "fdr")
+}
+
+
+nonsmoker_results <- rbind(numeric_results, categorical_results)
+nonsmoker_results$fdr <- p.adjust(nonsmoker_results$p.value, method = "fdr")
+
+# Round all columns except for fdr to 2 decimal places
+# results_summary <- results_summary %>%
+#   mutate(
+#     across(c(estimate, std.error, statistic, p.value, Lower.CI, Upper.CI, Odds), round, 2),
+#     fdr = formatC(fdr, format = "e", digits = 2), fdr_separate = formatC(fdr_separate, format = "e", digits = 2
+#   )
+
+
+#save results table 
+# write.table(results_summary, "~/iCloud/dev/Sherlock-Lung-ecDNA-backup/data/nonsmoker_genomic_features_wgII_removed.tsv", row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+
+
+setwd("/Users/azhark/iCloud/dev/Sherlock-Lung-ecDNA-backup/scripts")
+#NOW SMOKERS ONLY
+data <- read.csv("../data/log-reg-table5.tsv", sep="\t")
+
+
+data = data %>% filter(Smoking == "Smoker")
+
+#filter for adeno only
+data = data %>% filter(Histology == "Adenocarcinoma")
+
+genomic = data %>% select(WGD_Status, Telseq_TL_Ratio_median, TMB_median, mt_copy_number_median, hypoxia_score_median, Chromothripsis, L1_binary)
+features = c("WGD_Status", "Telseq_TL_Ratio_median", "TMB_median", "mt_copy_number_median", "Chromothripsis", "L1_binary")
+
+# genomic = data %>% select(WGD_Status, Telseq_TL_Ratio, TMB, mt_copy_number, Chromothripsis, L1_binary)
+# features = c("WGD_Status", "Telseq_TL_Ratio", "TMB", "mt_copy_number", "Chromothripsis", "L1_binary")
+
+data$WGD_Status = relevel(factor(data$WGD_Status), ref = 'nWGD')
+data$ecDNA. = relevel(factor(data$ecDNA.), ref = 'ecDNA-')
+
+data$Gender = relevel(factor(data$Gender), ref = 'Female')
+data$Histology = relevel(factor(data$Histology), ref = 'Adenocarcinoma')
+
+data$L1_binary <- factor(data$L1_binary)
+data$L1_binary <- relevel(data$L1_binary, ref = "LINE1 Absent")
+# Initialize a list to store results
+results_list <- list()
+
+
+# Iterate through each feature and perform logistic regression
+for (feature in features) {
+  print(paste("Running logistic regression for", feature))
+  #if feature is categorical, print the number in each category
+  if (is.factor(data[[feature]])) {
+    print(table(data[[feature]]))
+  }
+  model_summary <- run_logistic_regression(feature, data, smoking = FALSE, wgII=FALSE)
+  #select just the row that contains the string with the feature
+  
+  model_summary$term <- feature
+  #add to results list
+  results_list[[feature]] <- model_summary
+  #output tidy table for each feature
+  model_summary <- bind_rows(results_list)
+
+}
+
+# Combine results into a single dataframe for the current min_cases
+results_summary <- bind_rows(results_list)
+
+results_summary$Odds <- exp(results_summary$estimate)
+# Adjust p-values using FDR
+results_summary$fdr <- p.adjust(results_summary$p.value, method = "fdr")
+
+# Round all columns except for fdr to 2 decimal places
+# results_summary <- results_summary %>%
+#   mutate(
+#     across(c(estimate, std.error, statistic, p.value, Lower.CI, Upper.CI, Odds), round, 2),
+#     fdr = formatC(fdr, format = "e", digits = 2)
+#   )
+
+# Add annotation column
+results_summary$Annotation <- ifelse(
+  grepl("hypoxia|mt_copy_number|TMB|Telseq", results_summary$term),
+  "Numeric",
+  "Categorical"
+)
+
+# Split the data by annotation type
+numeric_results <- results_summary[results_summary$Annotation == "Numeric", ]
+categorical_results <- results_summary[results_summary$Annotation == "Categorical", ]
+
+# Calculate FDR separately for each group
+if (nrow(numeric_results) > 0) {
+  numeric_results$fdr_separate <- p.adjust(numeric_results$p.value, method = "fdr")
+}
+
+if (nrow(categorical_results) > 0) {
+  categorical_results$fdr_separate <- p.adjust(categorical_results$p.value, method = "fdr")
+}
+
+smoker_results <- rbind(numeric_results, categorical_results)
+
+smoker_results$fdr <- p.adjust(smoker_results$p.value, method = "fdr")
+
+
+# write.table(results_summary, "/Users/azhark/iCloud/dev/Sherlock-Lung-ecDNA-backup/data/smoker_genomic_features__wgII_removed.tsv", row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t")
+
+#For the figures in paper, we will use the numerical features input as above/below median , and include wGII as a covariate
+
+
+non_smokers_plot <- create_volcano_plot(nonsmoker_results, "Never Smokers (n=871)", "Adjusted by age, sex, ancestry, histology & purity & wGII")
+
+smokers_plot <- create_volcano_plot(smoker_results, "Smokers (n=345)", "Adjusted by age, sex, ancestry, purity & wGII")
+
+#use patchwork to combine plots
+combined_plot <- (non_smokers_plot | smokers_plot ) + plot_layout(heights = c(1, 0.1)) + plot_annotation(tag_levels = "a")
+
+library(gridExtra)
+
+combined_plot <- grid.arrange(
+  non_smokers_plot, smokers_plot,
+  ncol = 2,
+  top = textGrob(
+    "Genomic features associated with ecDNA", 
+    gp = gpar(fontsize = 16, fontface = "bold")  # Adjust fontsize as needed
+  )
+)
+
+```
+
+
+
+```{r SUPP. FIGURE 5B -- Pan-cancer Forest plot}
+
+# Create a custom forest plotting function
+create_forest_plot <- function(stats_df, var_mapping, xmin = -6, xmax = 6, highlight_var = NULL, feature_order = NULL) {
+  # Create plotting data frame that won't affect original data
+  plot_df <- stats_df
+  
+  # Set up the y-axis order without changing the underlying data relationships
+  if (!is.null(feature_order)) {
+    plot_df$Features <- factor(plot_df$Features, levels = feature_order)
+  }
+  
+  # Create y-axis highlight colors
+  y_colors <- rep("black", length(levels(plot_df$Features)))
+  if (!is.null(highlight_var)) {
+    y_colors[levels(plot_df$Features) == highlight_var] <- "purple"
+  }
+  
+  # Create plot
+  ggplot(plot_df, aes(x = log2(Odds), y = Features)) +
+    geom_point(aes(color = ifelse(Corrected.p.value < 0.02, "red", "black")), size = 3) +
+    geom_errorbarh(aes(xmin = log2(Lower.CI), xmax = log2(Upper.CI), 
+                      color = ifelse(Corrected.p.value < 0.02, "red", "black")), height = 0.2) +
+  geom_text(aes(label = paste0("OR = ", Odds, ", q= ", formatC(Corrected.p.value, format = "e", digits = 2))), vjust = -0.7, nudge_y = 0.2, nudge_x = 0.25, size=3.2) +
+    theme_bw() +
+    labs(title = "", x = "log2(Odds Ratio)", y = NULL) +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 10, face = "bold"),
+      axis.text.y = element_text(size = 10, color = y_colors),
+      panel.grid.major = element_line(color = "gray90"),
+      panel.grid.minor = element_line(color = "gray95"),
+      panel.border = element_rect(color = "black", fill = NA)
+    ) +
+    scale_color_identity() +
+    xlim(xmin, xmax) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "gray")
+}
+
+library(sjPlot)
+library(nlstools)
+library(broom)  
+library(dplyr) 
+
+data <- read.csv("..data/Pan-Cancer-AA-results_2.txt", sep="\t")
+ancestry <- read.csv("..data/pcawg_ancestry_primary.txt", sep="\t", header=TRUE)
+
+#merge
+data <- merge(data, ancestry, by.x = "Sample.name", by.y = "Sample.name", all.x = TRUE)
+
+#rename pam.ancestry.cluster to "Ancestry", and chnage all "AMR" to "Other"
+data$Ancestry <- data$ancestry_primary
+
+#replace all NA in ancestry$ancestry with "Other"
+data$Ancestry[is.na(data$Ancestry)] <- "Other"
+#replace all empty in ancestry$ancestry with "Other"
+data$Ancestry[data$Ancestry == ""] <- "Other"
+
+data$Ancestry[data$Ancestry == "AMR"] <- "Other"
+data$Ancestry[data$Ancestry == "AFR"] <- "Other"
+data$Ancestry[data$Ancestry == "SAN"] <- "Other"
+
+
+data$Ancestry <- as.factor(data$Ancestry)
+data$Ancestry <- relevel(data$Ancestry, ref="Other")
+
+
+data$gender[data$gender == ""] <- "male"
+data$gender <- as.factor(data$gender)
+data$gender <- relevel(data$gender, ref="male")
+
+data <- data[data$project_code != "LUAD",]
+data$ecDNA <- as.factor(data$ecDNA)
+
+data$project_code <- as.factor(data$project_code)
+#data$project_code <- relevel(data$project_code, ref="LUAD")
+data = data %>% mutate(project_code = relevel(project_code, "BLCA"))
+model <- glm(ecDNA ~ gender + purity + age + wgd + project_code + Ancestry, data = data, family = binomial(link = "logit"))
+
+CI <- confint2(
+    model,
+    level = 0.9,
+    test = c("lr"),
+    digits = max(3, getOption("digits") - 2),
+    verbose = TRUE
+)
+
+# Customize y-axis labels
+custom_labels <- c("Purity", "WGD [Ref= No WGD]", "Tissue:Breast [Ref=Lung]", "Gender:Female [Ref=Male]", "Tissue:Head/Neck [Ref=Lung]", "Age", "Tissue:Stomach [Ref=Lung]", "Tissue:Uterine [Ref=Lung]", "Tissue:Skin [Ref=Lung]")
+                    
+
+coefficients <- as.data.frame(tidy(model))
+
+coefficients$Corrected.p.value <- p.adjust(coefficients$p.value, method="fdr")
+coefficients$Odds <- exp(coefficients$estimate)
+coefficients$Lower.CI <- exp(CI[,1])
+coefficients$Upper.CI <- exp(CI[,2])
+coefficients$Features <- coefficients$term
+
+result <- coefficients %>% mutate(Odds=round(Odds, 2))
+result <- result %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+result <- result %>% arrange(desc(Odds))
+
+
+# Delete the row with the Intercept term
+result <- result[result$Features != "(Intercept)", ]
+
+map <- setNames(
+  c("Sex:Female (Ref=Male)",
+    "Purity",
+    "Age",
+    "Ancestry:EUR (Ref=Other)",
+    "Ancestry:ASN (Ref=Other)",
+    "Tissue:Breast (Ref=Bladder)",
+    "Tissue:Stomach (Ref=Bladder)",
+    "Tissue:Uterine (Ref=Bladder)",
+    "Tissue:Skin (Ref=Bladder)",
+    "Tissue:Head/Neck (Ref=Bladder)",
+    "WGD (Ref= No WGD)"
+  ),
+  c("genderfemale", 
+    "purity", 
+    "age",
+    "AncestryEUR",
+    "AncestryASN",
+    "project_codeBRCA", 
+    "project_codeSTAD", 
+    "project_codeUCEC", 
+    "project_codeSKCM", 
+    "project_codeHNSC", 
+    "wgd"
+  )
+)
+
+final_result <- result
+final_result$Features <- map[result$Features]
+
+final_result$Features <- gsub("(\\(Ref)", "\n\\1", final_result$Features)
+final_result <- final_result %>% arrange(desc(Odds))
+final_result$Features <- factor(final_result$Features, levels = rev(final_result$Features))
+
+pan_forest <- create_forest_plot(final_result, map, xmin = -8, xmax = 8, highlight_var = "WGD \n(Ref= No WGD)")
+
+```
+
+
+```{r SUPP FIGURE 5C -- Chromothripsis and ecDNA co-occurrence--sample level bar plot}
+
+m = read.csv("..data/log-reg-table5.tsv", sep = '\t', header=TRUE)
+
+#select the rows where chromothripsis is 1 and ecDNA is 1
+m <- m %>% dplyr::filter(Chromothripsis == 1 & ecDNA_status == 1)
+
+#replace NA in Annotation column with "ecDNA, no chromothripsis"
+m$Annotation[is.na(m$Annotation)] <- "ecDNA, no chromothripsis"
+#we'll need to derive the OR and p-value from logistic regression first
+
+#recode the Annotation variable to be binary
+#m3 <- adeno
+m3 <- m
+m3$Annotation <- ifelse(m3$Annotation == "ecDNA, chromothripsis", 1, 0)
+
+m3$Smoking <- factor(m3$Smoking, levels = c("Smoker", "Non-Smoker"))
+                        
+feature <- "Smoking"
+#first for lung adeno
+base_formula <- paste("Annotation ~", feature, "+ Gender + Tumor_Purity + Age + Ancestry + Histology")
+formula <- as.formula(base_formula)
+model <- glm(formula, data = m3, family = binomial)
+
+# Extract model summary
+  tidy_model <- tidy(model)
+  
+  CI <- confint2(
+    model,
+    level = 0.9,
+    test = c("lr"),
+    digits = max(3, getOption("digits") - 2),
+    verbose = TRUE
+  )
+  
+  tidy_model$Lower.CI <- exp(CI[,1])
+  tidy_model$Upper.CI <- exp(CI[,2])
+
+results_summary <- tidy_model
+results_summary$Odds <- exp(results_summary$estimate)
+
+results_summary <- results_summary %>%
+  mutate(
+    across(c(estimate, std.error, statistic, p.value, Lower.CI, Upper.CI, Odds), round, 2)
+  )
+
+create_chromo_ecDNA_barplot <- function(data, x_var = "Smoking", y_var = "Annotation", 
+                                        palette_colors = c("ecDNA, chromothripsis" = "red", 
+                                                           "ecDNA, no chromothripsis" = "gray"),
+                                        title = "",
+                                        include_chisq = TRUE, subtitle=", Adjusted by age, sex, purity, ancestry, histology", qval=0.02) {
+  # Convert variable names to symbols for use in ggplot2
+  x_var_sym <- sym(x_var)
+  y_var_sym <- sym(y_var)
+  
+  # Remove rows where either x_var or y_var is NA
+  data <- data %>%
+    dplyr::filter(!is.na(!!x_var_sym) & !is.na(!!y_var_sym))
+  
+  # Ensure the Annotation variable is a factor with the correct levels
+  data[[y_var]] <- factor(data[[y_var]], levels = c("ecDNA, chromothripsis", "ecDNA, no chromothripsis"))
+  
+  # Perform chi-squared test if requested
+  if (include_chisq) {
+    contingency_table <- table(data[[x_var]], data[[y_var]])
+    chisq_result <- tryCatch({
+      chisq.test(contingency_table)$p.value
+    }, error = function(e) NA)
+    
+    subtitle_text <- if (!is.na(chisq_result)) {
+      paste0("q = ", ifelse(chisq_result < 1, signif(qval, digits = 5), round(qval, 3)), subtitle)
+    } else {
+      "Chi-sq test not applicable"
+    }
+  } else {
+    subtitle_text <- NULL
+  }
+  
+  # Calculate percentages for each group
+  data_summary <- data %>%
+    group_by(!!x_var_sym, !!y_var_sym) %>%
+    summarise(count = n()) %>%
+    mutate(percentage = count)
+  
+  # Calculate total counts for each x_var group (to display below the bars)
+  total_counts <- data %>%
+    group_by(!!x_var_sym) %>%
+    summarise(total_count = n())
+  
+  # Create stacked bar plot with percentages
+  p <- ggplot(data_summary, aes(x = !!x_var_sym, y = percentage, fill = !!y_var_sym)) +
+    geom_bar(stat = "identity", position = "stack", color = "black") +  # Stacked bars with outline
+    scale_fill_manual(values = palette_colors) +  # Custom colors for categories
+    geom_text(aes(label = round(percentage, 1)), 
+              position = position_stack(vjust = 0.5), size = 3, color = "black") +  # Percentage labels
+    labs(
+      title = title,
+      subtitle = subtitle_text,
+      x = NULL,
+      y = "Percentage"
+    ) +
+    coord_cartesian(ylim = c(-10, 100)) +  # Expand y-axis to allow space below the bars for n= labels
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      plot.subtitle = element_text(size = 9),
+      axis.text.x = element_text(face = "bold", margin = margin(t = 5)),
+      plot.margin = margin(t = 10, r = 10, b = 30, l = 10),
+      legend.position = "none"  # Remove the legend
+    ) +
+    # Add total counts below each bar using total_counts, adjust y value to bring the labels closer
+    geom_text(data = total_counts, aes(x = !!x_var_sym, y = -2, label = paste0("n=", total_count)),
+              vjust = 1, size = 3, color = "black", inherit.aes = FALSE)  # Adjust y to -2 to bring closer
+  
+  # Return the plot
+  return(p)
+}
+
+#adeno <- m2[m2$Histology == 'Adenocarcinoma',]
+chromo_ecDNA_plot <- create_chromo_ecDNA_barplot(data = m, x_var = "Smoking", y_var="Annotation", title = "Chromothripsis and ecDNA co-occurrence", palette_colors = c("ecDNA, chromothripsis" = "red",  "ecDNA, no chromothripsis" = "gray"))
+
+print(chromo_ecDNA_plot)
+
+
+```
+
+
+```{r Supplementary Figure 5D -- Telomere length ratio from Telhunter}
+
+run_logistic_regression <- function(feature, data, smoking = FALSE, wgII=FALSE) {
+  
+  base_formula <- paste("ecDNA. ~", feature, "+ Gender + Tumor_Purity + Age + Ancestry + Histology")# + Histology")
+  #base_formula <- paste("BFB. ~", feature, "+ Gender + Tumor_Purity + Age + Ancestry + Histology")
+  
+  # Include the Smoking variable in the formula if smoking is TRUE
+  if (smoking) {
+    formula <- as.formula(paste(base_formula, "+ Smoking"))
+  } else {
+    formula <- as.formula(base_formula)
+  }
+  
+  # Include the Smoking variable in the formula if smoking is TRUE
+  if (wgII) {
+    formula <- as.formula(paste(base_formula, "+ wGII"))
+  } else {
+    formula <- as.formula(base_formula)
+  }
+  
+  
+  # Fit the logistic regression model
+  model <- glm(formula, data = data, family = binomial)
+  
+  # Check model fit
+  if (summary(model)$deviance == 0) {
+    warning(paste("Model fitting failed for", feature, "due to perfect separation"))
+    return(NULL)
+  }
+  
+  # Extract model summary
+  tidy_model <- tidy(model)
+  
+  CI <- confint2(
+    model,
+    level = 0.9,
+    test = c("lr"),
+    digits = max(3, getOption("digits") - 2),
+    verbose = TRUE
+  )
+  
+  tidy_model$Lower.CI <- exp(CI[,1])
+  tidy_model$Upper.CI <- exp(CI[,2])
+  
+  tidy_model$Odds <- exp(tidy_model$estimate)
+  # Adjust p-values using FDR
+  tidy_model$fdr <- p.adjust(tidy_model$p.value, method = "fdr")
+
+# Round all columns except for fdr to 2 decimal places
+tidy_model <- tidy_model %>%
+  mutate(
+    across(c(estimate, std.error, statistic, p.value, Lower.CI, Upper.CI, Odds), round, 2),
+    fdr = formatC(fdr, format = "e", digits = 2)
+  )
+  
+  safe_feature <- gsub("[^A-Za-z0-9._-]+", "_", feature)
+#   write.table(
+#     tidy_model,
+#     sprintf("/Users/azhark/Documents/dev/Sherlock-Lung/results2/never-smokers-models/wgII_included/%s_MEDIAN_wgII_included.tsv", ... = safe_feature),
+#   row.names = FALSE, col.names = TRUE, quote = FALSE, sep = "\t"
+# )
+  
+  # Filter for the row corresponding to the feature of interest using string matching
+  feature_row <- tidy_model %>%
+    filter(str_detect(term, feature))
+  
+  feature_row <- tidy_model
+  
+  
+  
+  # Return the summary filtered for the gene term
+  return(as.data.frame(feature_row))
+  
+}
+
+
+data <- read.csv("~/iCloud/dev/Sherlock-Lung/results2/log-reg-table5.tsv", sep = '\t', header=TRUE)
+tl <- read.csv("~/iCloud/dev/Sherlock-Lung/results2/telomere_length_all_methods.txt", sep = '\t', header=TRUE)
+#delete last column of tl
+tl <- tl[, -ncol(tl)]
+
+data <- merge(data, tl, by.x = "Tumor_Barcode", by.y = "Tumor_Barcode", all.x = TRUE)
+
+#add additional columns for above/below median for telomerecat and telhunter
+# data <- data %>%
+#   mutate(
+#     telhunter = ifelse(telhunter_TL >= median(telhunter_TL, na.rm=TRUE), 1, 0),
+#     telomerecat = ifelse(telomerecat_TL >= median(telomerecat_TL, na.rm=TRUE), 1, 0)
+#   )
+
+#remove all NA/NaN/Inf in telhunter and telomerecat
+data <- data %>%
+  filter(!is.na(telhunter) & !is.na(telomerecat) & is.finite(telhunter) & is.finite(telomerecat))
+
+data$WGD_Status = relevel(factor(data$WGD_Status), ref = 'nWGD')
+data$ecDNA. = relevel(factor(data$ecDNA.), ref = 'ecDNA-')
+
+data$Gender <- as.factor(data$Gender)
+data$Gender = relevel(factor(data$Gender), ref = 'Male')
+data$Histology = relevel(factor(data$Histology), ref = 'Adenocarcinoma')
+
+data$Ancestry <- as.factor(data$Ancestry)
+data$Ancestry = relevel(factor(data$Ancestry), ref = 'EUR')
+
+features = c("telhunter", "telomerecat")
+features = c("telhunter")
+
+#non-smokers only
+data = data %>% filter(Smoking == "Smoker")
+
+results_list <- list()
+# Iterate through each feature and perform logistic regression
+for (feature in features) {
+  print(paste("Running logistic regression for", feature))
+  #if feature is categorical, print the number in each category
+  if (is.factor(data[[feature]])) {
+    print(table(data[[feature]]))
+  }
+  model_summary <- run_logistic_regression(feature, data, smoking = FALSE, wgII=FALSE)
+  #select just the row that contains the string with the feature
+  
+  
+  model_summary$term <- feature
+  #add to results list
+  results_list[[feature]] <- model_summary
+  results_list <- model_summary
+
+}
+
+# Combine results into a single dataframe for the current min_cases
+results_summary <- bind_rows(results_list)
+
+results_summary <- glm(ecDNA. ~ Gender + Tumor_Purity + Age + Ancestry + Histology + telhunter, data = data, family = binomial(link = "logit"))
+
+CI <- confint2(
+    results_summary,
+    level = 0.9,
+    test = c("lr"),
+    digits = max(3, getOption("digits") - 2),
+    verbose = TRUE
+)
+
+
+results_summary <- tidy(results_summary)
+results_summary$Odds <- exp(results_summary$estimate)
+# Adjust p-values using FDR
+results_summary$fdr <- p.adjust(results_summary$p.value, method = "fdr")
+results_summary$Corrected.p.value <- results_summary$p.value
+results_summary$Features <- results_summary$term
+
+#add confidence intervals
+
+
+
+map <- list(
+    "GenderFemale" = "Sex:Female (Ref=Male)",
+    "Tumor_Purity" = "Purity",
+    "Age" = "Age",
+    "HistologySquamous cell carcinoma" = "Histology:LUSC (Ref=LUAD)",
+    "HistologyOther" = "Histology:Other (Ref=LUAD)",
+    "HistologyCarcinoid tumor" = "Histology:Carcinoid (Ref=LUAD)",
+    "AncestryEAS" = "Ancestry:EAS (Ref=EUR)",
+    "AncestryOther" = "Ancestry:Other (Ref=EUR)",
+    "telhunter" = "Telhunter Telomere Length (log2 Ratio)"
+)
+
+results_summary$Lower.CI <- exp(CI[,1])
+results_summary$Upper.CI <- exp(CI[,2])
+
+results_summary$Features <- results_summary$term
+results_summary <- results_summary %>% mutate(Odds=round(Odds, 2))
+results_summary <- results_summary %>% dplyr::select(c("Features", "estimate", "p.value", "Corrected.p.value", "Odds", "Lower.CI", "Upper.CI"))
+
+results_summary <- results_summary %>%
+  mutate(Features = dplyr::recode(Features, !!!map, .default = Features))
+
+#remove intercept
+results_summary <- results_summary[results_summary$Features != "(Intercept)", ]
+p <- ggplot(results_summary, aes(x = log2(Odds), y = Features)) +
+  geom_point(aes(color = ifelse(Odds > 3, "red", "black")), size = 3) +
+  geom_errorbarh(aes(xmin = log2(Lower.CI), xmax = log2(Upper.CI), color = ifelse(Odds > 3, "red", "black")), height = 0.2) +
+  geom_text(aes(label = paste0("OR = ", Odds, ", q= ", formatC(Corrected.p.value, format = "e", digits = 2))), vjust = -0.7, nudge_y = 0.2, nudge_x = 0.25, size=3.2) +
+  theme_minimal() +
+  labs(
+    title = "ecDNA status",
+    x = "Odds ratio (log2)",
+    y = NULL 
+  ) +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 10, face = "bold"),
+    axis.text.y = element_text(size = 10)
+  ) +
+  scale_color_identity() + xlim(-10, 10) + geom_vline(xintercept = 0, linetype = "dashed", color = "gray")
+
+
+```
+
+
+```{r SUPP FIGURE 5E -- Telomere length ratio input as continuous numeric variable in never-smokers}
+data <- read.csv("~/iCloud/dev/Sherlock-Lung/results2/log-reg-table5.tsv", sep = '\t', header=TRUE)
+
+nonsmokers <- data[data$Smoking == "Non-Smoker",]
+smokers <- data[data$Smoking == "Smoker",]
+
+
+data$ecDNA. = relevel(factor(data$ecDNA.), ref = 'ecDNA-')
+
+data$Gender = relevel(factor(data$Gender), ref = 'Female')
+data$Histology = relevel(factor(data$Histology), ref = 'Adenocarcinoma')
+
+feature <- "Telseq_TL_Ratio"
+formula <- paste("ecDNA_status ~", feature, "+ Gender + Tumor_Purity + Age + Ancestry + Histology")# + Histology")
+  
+# Fit the logistic regression model
+nonsmoker_model <- glm(formula, data = nonsmokers, family = binomial)
+
+# Extract model summary
+tidy_model <- tidy(nonsmoker_model)
+
+CI <- confint2(
+nonsmoker_model,
+level = 0.9,
+test = c("lr"),
+digits = max(3, getOption("digits") - 2),
+verbose = TRUE
+)
+
+tidy_model$Lower.CI <- exp(CI[,1])
+tidy_model$Upper.CI <- exp(CI[,2])
+
+tidy_model$Odds <- exp(tidy_model$estimate)
+# Adjust p-values using FDR
+tidy_model$fdr <- p.adjust(tidy_model$p.value, method = "fdr")
+
+nonsmoker_p_val <- tidy_model$p.value[tidy_model$term == feature]
+  
+
+# Format p-value in scientific notation if very small
+if (nonsmoker_p_val < 0.001) {
+  p_label <- sprintf("Adj. P = %.1e", nonsmoker_p_val)
+} else {
+  p_label <- sprintf("Adj. P = %.2f", nonsmoker_p_val)
+}
+
+ns <- ggplot(nonsmokers, aes(x = ecDNA., y = Telseq_TL_Ratio)) +
+  # Boxplot with black outline, no fill
+  geom_boxplot(width = 0.4, 
+               fill = NA, 
+               color = "black", 
+               outlier.shape = NA, # Outliers will be shown as jitter points
+               size = 0.8) +
+  geom_jitter(aes(color = ecDNA., fill = NA), 
+              width = 0.2, 
+              alpha = 0.2, 
+              size = 1.5,
+              shape = 21,  # This shape allows separate control of outline and fill
+              stroke = 1)  +  # Control outline thickness
+  # Define colors: 0 (ecDNA-) as gray and 1 (ecDNA+) as red
+  scale_color_manual(values = c("ecDNA-" = "gray50", "ecDNA+" = "red")) +
+  # Labels
+  labs(title = "Never-Smokers",
+       subtitle = "Adjusted by age, sex, ancestry, histology, purity & wGII",
+       x = "ecDNA Status",
+       y = "T/N telomere length ratio (log2)") +
+  # Add significance bar and p-value
+  annotate("segment", 
+           x = 1, xend = 2, 
+           y = 0.95, yend = 0.95, 
+           color = "black", size = 0.5) +
+  annotate("segment", 
+           x = 1, xend = 1, 
+           y = 0.95, yend = 0.92, 
+           color = "black", size = 0.5) +
+  annotate("segment", 
+           x = 2, xend = 2, 
+           y = 0.95, yend = 0.92, 
+           color = "black", size = 0.5) +
+  annotate("text", 
+           x = 1.5, y = 0.98, 
+           label = p_label, 
+           size = 4, 
+           color = "black") +
+    scale_x_discrete(labels = c(
+    "ecDNA-" = paste0("ecDNA-\nn=", sum(nonsmokers$ecDNA. == "ecDNA-", na.rm = TRUE)),
+    "ecDNA+" = paste0("ecDNA+\nn=", sum(nonsmokers$ecDNA. == "ecDNA+", na.rm = TRUE))
+  )) + 
+  # Theme for publication quality with border and gridlines
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 10, hjust = 0.5),
+    axis.title = element_text(size = 11, face = "bold"),
+    axis.text = element_text(size = 10, color = "black"),
+    legend.position = "none", # Remove legend
+    panel.grid.major = element_line(color = "gray90", size = 0.5), # Light gray major grid lines
+    panel.grid.minor = element_blank(), # Remove minor grid lines
+    panel.border = element_rect(color = "black", fill = NA, size = 1), # Black border around plot
+    plot.margin = margin(10, 10, 10, 10) # Adjust margins
+  )
+
+#Calculate p-value using logistic regression with adjustment for covariates
+smoker_model <- glm(formula, data = smokers, family = binomial)
+
+# Extract model summary
+tidy_model <- tidy(smoker_model)
+
+CI <- confint2(
+smoker_model,
+level = 0.9,
+test = c("lr"),
+digits = max(3, getOption("digits") - 2),
+verbose = TRUE
+)
+
+tidy_model$Lower.CI <- exp(CI[,1])
+tidy_model$Upper.CI <- exp(CI[,2])
+
+tidy_model$Odds <- exp(tidy_model$estimate)
+# Adjust p-values using FDR
+tidy_model$fdr <- p.adjust(tidy_model$p.value, method = "fdr")
+
+smoker_p_val <- tidy_model$p.value[tidy_model$term == feature]
+
+# Format p-value in scientific notation if very small
+if (smoker_p_val < 0.001) {
+  p_label <- sprintf("Adj. P = %.1e", smoker_p_val)
+} else {
+  p_label <- sprintf("Adj. P = %.2f", smoker_p_val)
+}
+
+s <- ggplot(smokers, aes(x = ecDNA., y = Telseq_TL_Ratio)) +
+  # Boxplot with black outline, no fill
+  geom_boxplot(width = 0.4, 
+               fill = NA, 
+               color = "black", 
+               outlier.shape = NA, # Outliers will be shown as jitter points
+               size = 0.8) +
+  geom_jitter(aes(color = ecDNA., fill = NA), 
+              width = 0.2, 
+              alpha = 0.2, 
+              size = 1.5,
+              shape = 21,  # This shape allows separate control of outline and fill
+              stroke = 1)  +  # Control outline thickness
+  # Define colors: 0 (ecDNA-) as gray and 1 (ecDNA+) as red
+  scale_color_manual(values = c("ecDNA-" = "gray50", "ecDNA+" = "red")) +
+  # Labels
+  labs(title = "Smokers",
+       subtitle = "Adjusted by age, sex, ancestry, histology, purity & wGII",
+       x = "ecDNA Status",
+       y = "T/N telomere length (log2)") +
+  # Add significance bar and p-value
+  annotate("segment", 
+           x = 1, xend = 2, 
+           y = 0.95, yend = 0.95, 
+           color = "black", size = 0.5) +
+  annotate("segment", 
+           x = 1, xend = 1, 
+           y = 0.95, yend = 0.92, 
+           color = "black", size = 0.5) +
+  annotate("segment", 
+           x = 2, xend = 2, 
+           y = 0.95, yend = 0.92, 
+           color = "black", size = 0.5) +
+  annotate("text", 
+           x = 1.5, y = 0.98, 
+           label = p_label, 
+           size = 4, 
+           color = "black") +
+    scale_x_discrete(labels = c(
+    "ecDNA-" = paste0("ecDNA-\nn=", sum(smokers$ecDNA. == "ecDNA-", na.rm = TRUE)),
+    "ecDNA+" = paste0("ecDNA+\nn=", sum(smokers$ecDNA. == "ecDNA+", na.rm = TRUE))
+  )) + 
+  # Theme for publication quality with border and gridlines
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 14, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 10, hjust = 0.5),
+    axis.title = element_text(size = 11, face = "bold"),
+    axis.text = element_text(size = 10, color = "black"),
+    legend.position = "none", # Remove legend
+    panel.grid.major = element_line(color = "gray90", size = 0.5), # Light gray major grid lines
+    panel.grid.minor = element_blank(), # Remove minor grid lines
+    panel.border = element_rect(color = "black", fill = NA, size = 1), # Black border around plot
+    plot.margin = margin(10, 10, 10, 10) # Adjust margins
+  )
+
+#combine plots
+combined_plot <- ns + s + plot_layout(ncol = 2) + plot_annotation(tag_levels = 'a')
+
+
+
+
+
+
+
+
+
+```
+
+
+
+```{r SUPP. FIGURE 6 -- GLOBAL MUTATIONAL SIGNATURES}
+
+library(tidyverse)
+library(scales)
+library(ggrepel)
+library(broom)
+library(nlstools)
+library(patchwork)
+library(dplyr)
+
+
+data <- read.csv("..data/log-reg-table5.tsv", sep = '\t', header=TRUE)
+
+# Load the data for each variant type
+sbs <- read.table("..data/SBS.tsv", sep = '\t', header=TRUE)
+#dbs <- read.table("/Users/khandekara2/iCloud/dev/Sherlock-Lung/results2/DBS.tsv", sep = '\t', header=TRUE)
+id <- read.table("..data/indel.tsv", sep = '\t', header=TRUE)
+
+load("..data/Signature_CN.RData")
+load("..data/Signature_SV.RData")
+cnv <- cn68_activity
+sv <- sv38_activity
+
+#NOW MUTATIONAL SIGNATURES
+
+# 1. Presence or absence (1/0)
+# 2. Above median / below median 
+# 3. Continuous (Probability from assignment)
+
+#we have 5 signature types (SBS, ID, DBS, CN, SV)
+
+# Function to calculate presence (1/0)
+get_presence <- function(data) {
+  return(ifelse(data > 0, 1, 0))
+}
+
+# Function to calculate binary (above/below median)
+get_binary <- function(data) {
+  median_value <- median(data, na.rm=TRUE)
+  return(ifelse(data > median_value, 1, 0))
+}
+
+#Function to do a hybrid approach where where if the there is presence across >=50% of samples, we do above/below median, otherwise we do presence/absence
+get_hybrid <- function(data) {
+  
+  presence <- get_presence(data)
+  
+  # Capture the column name
+  signature_name <- deparse(substitute(data))# Determine if presence is >= 50%
+  
+  is_above_50 <- sum(presence) >= 0.5 * length(presence)
+  
+  # Print the signature name and whether presence was >= 50%
+  #print(paste("Signature:", signature_name, "| Presence >= 50%:", is_above_50))
+  
+  
+  if (sum(presence) >= 0.5 * length(presence)) {
+    return(get_binary(data))
+  } else {
+    return(presence)
+  }
+  #print out the name of the column (signature) and whether the presence was >=50% or not
+  
+}
+
+# Function to process a variant type
+process_variant <- function(variant_df) {
+  # Get signature columns (everything except 'Tumor_Barcode')
+  signature_columns <- colnames(variant_df)[-1]
+  
+  # Raw data remains as is (just for reference, you may save it if needed)
+  raw_df <- variant_df
+  
+  # Apply presence (1/0)
+  presence_df <- variant_df
+  presence_df[, signature_columns] <- apply(variant_df[, signature_columns], 2, get_presence)
+  
+  # Apply binary (above/below median)
+  binary_df <- variant_df
+  binary_df[, signature_columns] <- apply(variant_df[, signature_columns], 2, get_binary)
+  
+  # Return all three dataframes
+  return(list(raw_df = raw_df, presence_df = presence_df, binary_df = binary_df))
+}
+
+# Load the data for each variant type
+sbs <- read.table("..data/SBS.tsv", sep = '\t', header=TRUE)
+#dbs <- read.table("/Users/khandekara2/iCloud/dev/Sherlock-Lung/results2/DBS.tsv", sep = '\t', header=TRUE)
+id <- read.table("..data/indel.tsv", sep = '\t', header=TRUE)
+
+load("..data/Signature_CN.RData")
+load("..data/results2/Signature_SV.RData")
+cnv <- cn68_activity
+sv <- sv38_activity
+
+# Function to process a variant type
+process_variant <- function(variant_df) {
+  # Get signature columns (everything except 'Tumor_Barcode')
+  signature_columns <- colnames(variant_df)[-1]
+  
+  raw_df <- variant_df
+  
+  # Apply presence (1/0)
+  presence_df <- variant_df
+  presence_df[, signature_columns] <- apply(variant_df[, signature_columns], 2, get_presence)
+  
+  # Apply binary (above/below median)
+  binary_df <- variant_df
+  binary_df[, signature_columns] <- apply(variant_df[, signature_columns], 2, get_binary)
+  
+  hybrid_df <- variant_df
+  hybrid_df[, signature_columns] <- apply(variant_df[, signature_columns], 2, get_hybrid)
+  
+  
+  # Return all three dataframes
+  return(list(raw_df = raw_df, presence_df = presence_df, binary_df = binary_df, hybrid_df = hybrid_df))
+}
+
+# Process each variant type
+sbs_processed <- process_variant(sbs)
+#dbs_processed <- process_variant(dbs)
+id_processed <- process_variant(id)
+cnv_processed <- process_variant(cnv)
+sv_processed <- process_variant(sv)
+
+# Function to merge across all variants, while keeping the Tumor_Barcode column
+merge_variants <- function(sbs, id, cnv, sv) {
+  # Merge all dataframes on 'Tumor_Barcode'
+  combined_df <- Reduce(function(x, y) merge(x, y, by = "Tumor_Barcode"), list(sbs, id, cnv, sv))
+  return(combined_df)
+}
+
+# Combine raw data across all variant types
+raw_combined <- merge_variants(sbs_processed$raw_df, id_processed$raw_df, cnv_processed$raw_df, sv_processed$raw_df)
+
+# Combine presence data across all variant types
+presence_combined <- merge_variants(sbs_processed$presence_df, id_processed$presence_df, cnv_processed$presence_df, sv_processed$presence_df)
+
+# Combine binary data across all variant types
+binary_combined <- merge_variants(sbs_processed$binary_df, id_processed$binary_df, cnv_processed$binary_df, sv_processed$binary_df)
+
+hybrid_combined <- merge_variants(sbs_processed$hybrid_df, id_processed$hybrid_df, cnv_processed$hybrid_df, sv_processed$hybrid_df)
+
+
+# View the final combined tables
+# head(raw_combined)
+# head(presence_combined)
+# head(binary_combined)
+# head(hybrid_combined)
+
+
+metadata <- read.table("..data/log-reg-table5.tsv", header = TRUE, sep = "\t")
+
+covariates = metadata %>% dplyr::select(Gender, Tumor_Purity,
+                                 Age, Histology, Stage_group, Ancestry, Smoking, Tumor_Barcode, ecDNA., TMB)
+
+#merge hybrid with all the covariates in the metadata
+hybrid_combined <- merge(hybrid_combined, covariates, by = "Tumor_Barcode")
+signatures = colnames(hybrid_combined %>% dplyr::select(starts_with("SBS"), starts_with("ID"), starts_with("DBS"), starts_with("CN"), starts_with("SV")))
+
+# Convert ecDNA column to binary (0/1)
+hybrid_combined$ecDNA. <- ifelse(hybrid_combined$ecDNA. == "ecDNA+", 1, 0)
+
+#set reference levels of covariates
+hybrid_combined$Gender = relevel(factor(hybrid_combined$Gender), ref = 'Female')
+hybrid_combined$Histology = relevel(factor(hybrid_combined$Histology), ref = 'Adenocarcinoma')
+hybrid_combined$Ancestry = relevel(factor(hybrid_combined$Ancestry), ref = 'EUR')
+hybrid_combined$Smoking = relevel(factor(hybrid_combined$Smoking), ref = 'Non-Smoker')
+
+run_logistic_regression <- function(feature, data, smoking = TRUE) {
+  
+  # Dynamically build the formula
+  base_formula <- paste("ecDNA. ~", feature, "+ Gender + Tumor_Purity + Age + Ancestry + Histology + TMB")
+  #base_formula <- paste("BFB. ~", feature, "+ Gender + Tumor_Purity + Age + Ancestry + Histology")
+  
+  # Include the Smoking variable in the formula if smoking is TRUE
+  if (smoking) {
+    formula <- as.formula(paste(base_formula, "+ Smoking"))
+  } else {
+    formula <- as.formula(base_formula)
+  }
+  
+  # Fit the logistic regression model
+  model <- glm(formula, data = data, family = binomial)
+  
+  # Check model fit
+  if (summary(model)$deviance == 0) {
+    warning(paste("Model fitting failed for", feature, "due to perfect separation"))
+    return(NULL)
+  }
+  
+  # Extract model summary
+  tidy_model <- tidy(model)
+  
+  
+  CI <- confint2(
+    model,
+    level = 0.9,
+    test = c("lr"),
+    digits = max(3, getOption("digits") - 2),
+    verbose = TRUE
+  )
+  
+  tidy_model$Lower.CI <- exp(CI[,1])
+  tidy_model$Upper.CI <- exp(CI[,2])
+  
+
+  # Filter for the row corresponding to the feature of interest using string matching
+  feature_row <- tidy_model %>%
+    filter(str_detect(term, feature))
+  
+  # Return the summary filtered for the gene term
+  return(as.data.frame(feature_row))
+  
+}
+
+#subset for nonsmokers
+hybrid_combined_ns <- hybrid_combined[hybrid_combined$Smoking == "Non-Smoker",]
+
+#subset for smokers
+hybrid_combined_s <- hybrid_combined[hybrid_combined$Smoking == "Smoker",]
+
+# Initialize results list to store regression results
+results_list <- list()
+
+features <- signatures
+# Iterate through each feature and perform logistic regression
+for (feature in features) {
+  print(paste("Running logistic regression for", feature))
+  #if feature is categorical, print the number in each category
+  # if (is.factor(hybrid_combined_ns[[feature]])) {
+  #   print(table(hybrid_combined_ns[[feature]]))
+  # }
+  model_summary <- run_logistic_regression(feature, hybrid_combined_ns, smoking = FALSE)
+  
+  #select just the row that contains the string with the feature
+  
+  #add to results list
+  # Check if model_summary is not NULL (i.e., model didn't fail)
+  if (!is.null(model_summary)) {
+    # Ensure that the term is the feature name (in case it gets lost)
+    model_summary$term <- feature
+    
+    # Add the result to the results list
+    results_list[[feature]] <- model_summary
+    
+  }
+  
+}
+
+results_summary <- bind_rows(results_list)
+
+results_summary$Odds <- exp(results_summary$estimate)
+# Adjust p-values using FDR
+results_summary$fdr <- p.adjust(results_summary$p.value, method = "fdr")
+
+#remove anything with NA in FDR
+results_summary <- results_summary %>%
+  filter(!is.na(fdr))
+
+# Calculate log2(odds ratio) and -log10(FDR) for plotting
+results_summary$log_odds <- log2(results_summary$Odds)
+results_summary$log_fdr <- -log10(results_summary$fdr)
+
+# Ensure that fdr and Odds are numeric
+results_summary$fdr <- as.numeric(results_summary$fdr)
+results_summary$Odds <- as.numeric(results_summary$Odds)
+
+# Sort by fdr (ascending) and then by Odds (descending)
+results_summary <- results_summary %>%
+  arrange(fdr, desc(Odds))
+
+# Round all columns except for fdr to 2 decimal places
+results_summary <- results_summary %>%
+  mutate(
+    across(c(estimate, std.error, statistic, p.value, Lower.CI, Upper.CI, Odds), round, 2),
+    fdr = formatC(fdr, format = "e", digits = 2)
+  )
+
+# Create the SignatureType column based on the first two letters of the term
+results_summary$SignatureType <- ifelse(substr(results_summary$term, 1, 2) == "CN", "CN",
+                                        ifelse(substr(results_summary$term, 1, 2) == "SV", "SV",
+                                               ifelse(substr(results_summary$term, 1, 3) == "SBS", "SBS", "ID")))
+
+
+#remove rows with confidence interval "Inf"
+results_summary <- results_summary %>%
+  filter(Lower.CI != "Inf" & Upper.CI != "Inf")
+
+results_summary$fdr <- as.numeric(as.character(results_summary$fdr))
+
+# Create the Enrichment column based on Odds ratio and statistical significance (FDR < 0.05)
+results_summary$Enrichment <- ifelse(
+  results_summary$fdr < 0.05 & results_summary$Odds > 1, "Enriched in ecDNA+",
+  ifelse(results_summary$fdr < 0.05 & results_summary$Odds < 1, "Enriched in ecDNA-",
+         "Not significantly enriched")
+)
+
+results_summary_nonsmoker <- results_summary %>%
+  rename(signature = term)
+
+create_volcano_plot <- function(data, title) {
+  significant_data <- subset(data, fdr < 0.05)
+  
+  # Calculate dynamic x and y limits based on the data
+  max_abs_log_odds <- max(abs(data$log_odds), na.rm = TRUE)
+  x_min <- -max_abs_log_odds
+  x_max <- max_abs_log_odds
+  y_max <- max(data$log_fdr, na.rm = TRUE) + 1
+  
+  ggplot(data, aes(x = log_odds, y = -log10(fdr))) +  # Map color to Enrichment
+    geom_point(size = 2, color = "black") +
+    geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "red") +
+    geom_hline(yintercept = -log10(0.01), linetype = "dashed", color = "blue") +
+    geom_vline(xintercept = 0, linetype = "solid", color = "black", size = 0.5) +  # Solid vertical line at x = 0
+    geom_text_repel(data = significant_data, aes(label = signature), size = 3, max.overlaps = Inf, color = "black") +
+    scale_x_continuous(limits = c(x_min, x_max)) +
+    scale_y_continuous(limits = c(0, y_max)) +
+    labs(
+      x = "log2(Odds Ratio)",
+      y = "-log10(FDR)",
+      title = title,
+      subtitle = "Adjusted by age, sex, ancestry, histology & purity") +     
+    scale_y_continuous(breaks = pretty_breaks(n=7))+
+    theme_bw(base_size = 12)+ # Changed from theme_ipsum_rc to theme_bw
+    theme(
+      panel.grid = element_blank(),
+      axis.line = element_line(color = "black"),
+      axis.text = element_text(color = "black"),
+      axis.title = element_text(color = "black", face = "bold"),
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+      plot.subtitle = element_text(hjust = 0.5, size = 10),
+      plot.margin = margin(t = 10, r = 10, b = 10, l = 10)
+    ) +
+    ggtitle(title)
+}
+
+
+
+results_summary <- results_summary_nonsmoker
+
+sbs_data <- subset(results_summary, SignatureType == "SBS")
+id_data <- subset(results_summary, SignatureType == "ID")
+cn_data <- subset(results_summary, SignatureType == "CN")
+sv_data <- subset(results_summary, SignatureType == "SV")
+
+sbs_data$fdr <- as.numeric(as.character(sbs_data$fdr))
+id_data$fdr <- as.numeric(as.character(id_data$fdr))
+cn_data$fdr <- as.numeric(as.character(cn_data$fdr))
+sv_data$fdr <- as.numeric(as.character(sv_data$fdr))
+
+# Create plots for each signature type
+sbs_ns <- create_volcano_plot(sbs_data, "SBS Signatures")
+id_ns <- create_volcano_plot(id_data, "ID Signatures")
+cn_ns <- create_volcano_plot(cn_data, "CN Signatures")
+sv_ns <- create_volcano_plot(sv_data, "SV Signatures")
+
+non_smoker_plot <- sbs_ns + id_ns + cn_ns + sv_ns 
+
+
+# Initialize results list to store regression results
+results_list <- list()
+
+features <- signatures
+# Iterate through each feature and perform logistic regression
+for (feature in features) {
+  print(paste("Running logistic regression for", feature))
+  #if feature is categorical, print the number in each category
+  # if (is.factor(hybrid_combined_s[[feature]])) {
+  #   print(table(hybrid_combined_s[[feature]]))
+  # }
+  model_summary <- run_logistic_regression(feature, hybrid_combined_s, smoking = FALSE)
+  
+  #select just the row that contains the string with the feature
+  
+  #add to results list
+  # Check if model_summary is not NULL (i.e., model didn't fail)
+  if (!is.null(model_summary)) {
+    # Ensure that the term is the feature name (in case it gets lost)
+    model_summary$term <- feature
+    
+    # Add the result to the results list
+    results_list[[feature]] <- model_summary
+    
+  }
+  
+}
+
+results_summary <- bind_rows(results_list)
+
+results_summary$Odds <- exp(results_summary$estimate)
+# Adjust p-values using FDR
+results_summary$fdr <- p.adjust(results_summary$p.value, method = "fdr")
+
+#remove anything with NA in FDR
+results_summary <- results_summary %>%
+  filter(!is.na(fdr))
+
+# Calculate log2(odds ratio) and -log10(FDR) for plotting
+results_summary$log_odds <- log2(results_summary$Odds)
+results_summary$log_fdr <- -log10(results_summary$fdr)
+
+# Ensure that fdr and Odds are numeric
+results_summary$fdr <- as.numeric(results_summary$fdr)
+results_summary$Odds <- as.numeric(results_summary$Odds)
+
+# Sort by fdr (ascending) and then by Odds (descending)
+results_summary <- results_summary %>%
+  arrange(fdr, desc(Odds))
+
+# Round all columns except for fdr to 2 decimal places
+results_summary <- results_summary %>%
+  mutate(
+    across(c(estimate, std.error, statistic, p.value, Lower.CI, Upper.CI, Odds), round, 2),
+    fdr = formatC(fdr, format = "e", digits = 2)
+  )
+
+# Create the SignatureType column based on the first two letters of the term
+results_summary$SignatureType <- ifelse(substr(results_summary$term, 1, 2) == "CN", "CN",
+                                        ifelse(substr(results_summary$term, 1, 2) == "SV", "SV",
+                                               ifelse(substr(results_summary$term, 1, 3) == "SBS", "SBS", "ID")))
+
+
+#remove rows with confidence interval "Inf"
+results_summary <- results_summary %>%
+  filter(Lower.CI != "Inf" & Upper.CI != "Inf")
+
+results_summary$fdr <- as.numeric(as.character(results_summary$fdr))
+
+# Create the Enrichment column based on Odds ratio and statistical significance (FDR < 0.05)
+results_summary$Enrichment <- ifelse(
+  results_summary$fdr < 0.05 & results_summary$Odds > 1, "Enriched in ecDNA+",
+  ifelse(results_summary$fdr < 0.05 & results_summary$Odds < 1, "Enriched in ecDNA-",
+         "Not significantly enriched")
+)
+
+results_summary_smoker <- results_summary %>%
+  rename(signature = term)
+
+results_summary <- results_summary_smoker
+
+sbs_data <- subset(results_summary, SignatureType == "SBS")
+id_data <- subset(results_summary, SignatureType == "ID")
+cn_data <- subset(results_summary, SignatureType == "CN")
+sv_data <- subset(results_summary, SignatureType == "SV")
+
+sbs_data$fdr <- as.numeric(as.character(sbs_data$fdr))
+id_data$fdr <- as.numeric(as.character(id_data$fdr))
+cn_data$fdr <- as.numeric(as.character(cn_data$fdr))
+sv_data$fdr <- as.numeric(as.character(sv_data$fdr))
+
+# Create plots for each signature type
+sbs_s <- create_volcano_plot(sbs_data, "SBS Signatures")
+id_s <- create_volcano_plot(id_data, "ID Signatures")
+cn_s <- create_volcano_plot(cn_data, "CN Signatures")
+sv_s <- create_volcano_plot(sv_data, "SV Signatures")
+
+smoker_plot <- sbs_s + id_s + cn_s + sv_s 
+
+print(nonsmoker_plot)
+print(smoker_plot)
+```
+
+
+
+
+```{r SUPPLEMENTARY FIGURE 7A -- UPSET plot for genomic features}
+library(UpSetR)
+
+s <- read.csv("..data/ecDNA_genomic_categories2.csv", sep = '\t', header=TRUE)
+metadata <- read.csv("../metadata/sherlock_1217_metadata", sep = '\t', header=TRUE)
+#select smoking and Tumor_Barcode
+metadata <- metadata[,c("Tumor_Barcode","Smoking")]
+#merge
+s <- merge(s, metadata, by="Tumor_Barcode", all.x=TRUE)
+
+nonsmoker <- s[s$Smoking == "Non-Smoker",]
+smoker <- s[s$Smoking == "Smoker",]
+
+
+# Define the target categories (with capital first letters)
+target_categories <- c("Immunomodulatory gene", "Other gene", "Oncogene", "Regulatory region")
+
+# Initialize counters and vectors
+count_immunomodulatory_gene <- 0
+count_other_gene <- 0
+count_oncogene <- 0
+count_regulatory_region <- 0
+count_unknown <- 0
+
+immunomodulatory_gene <- character(0)
+other_gene <- character(0)
+oncogene <- character(0)
+regulatory_region <- character(0)
+unknown <- character(0)
+
+# Loop through each row
+for (i in seq_len(nrow(s))) {
+  # Remove brackets and split by comma
+  categories <- gsub("\\[|\\]", "", nonsmoker$Category[i])
+  categories <- strsplit(categories, ",")[[1]]
+  # Clean up quotes and spaces
+  categories <- gsub("^\\s+|\\s+$|'", "", categories)
+  
+  if ("Immunomodulatory gene" %in% categories) {
+    count_immunomodulatory_gene <- count_immunomodulatory_gene + 1
+    immunomodulatory_gene <- c(immunomodulatory_gene, nonsmoker$Feature_ID[i])
+  }
+  if ("Other gene" %in% categories) {
+    count_other_gene <- count_other_gene + 1
+    other_gene <- c(other_gene, nonsmoker$Feature_ID[i])
+  }
+  if ("Oncogene" %in% categories) {
+    count_oncogene <- count_oncogene + 1
+    oncogene <- c(oncogene, nonsmoker$Feature_ID[i])
+  }
+  if ("Regulatory region" %in% categories) {
+    count_regulatory_region <- count_regulatory_region + 1
+    regulatory_region <- c(regulatory_region, nonsmoker$Feature_ID[i])
+  }
+  if (!any(categories %in% target_categories)) {
+  count_unknown <- count_unknown + 1
+  unknown <- c(unknown, nonsmoker$Feature_ID[i])
+  }
+}
+
+# Display counts
+cat("Counts of Feature_IDs by Category:\n")
+cat("Immunomodulatory Gene:", count_immunomodulatory_gene, "\n")
+cat("Other Gene:", count_other_gene, "\n")
+cat("Oncogene:", count_oncogene, "\n")
+cat("Regulatory Region:", count_regulatory_region, "\n")
+cat("No known genetic element:", count_unknown, "\n")
+
+# For nonsmoker plot
+sets <- list(
+  "Oncogenes (COSMIC)" = oncogene,                           # Changed from oncogene
+  "Immunomodulatory Genes" = immunomodulatory_gene, # Changed from immunomodulatory_gene
+  "Promoter or Enhancer Region" = regulatory_region,          # Changed from regulatory_region
+  "Other Genes" = other_gene,                       # Changed from other_gene
+  "No known genetic element" = unknown                               # Changed from unknown
+)
+
+set.data <- fromList(sets)
+
+nonsmoker_plot <- upset(set.data, 
+            sets = rev(c("Immunomodulatory Genes", "Oncogenes (COSMIC)", "Promoter or Enhancer Region", "Other Genes", "No known genetic element")),
+            keep.order = TRUE,
+            sets.bar.color = "black",
+            main.bar.color = "red",
+            matrix.color = "darkred",
+            mainbar.y.label = "",
+            sets.x.label = "# of ecDNAs",
+            order.by = "freq")
+
+smoker <- s[s$Smoking == "Smoker",]
+
+# Define the target categories (with capital first letters)
+target_categories <- c("Immunomodulatory gene", "Other gene", "Oncogene", "Regulatory region")
+
+# Initialize counters and vectors
+count_immunomodulatory_gene <- 0
+count_other_gene <- 0
+count_oncogene <- 0
+count_regulatory_region <- 0
+count_unknown <- 0
+
+immunomodulatory_gene <- character(0)
+other_gene <- character(0)
+oncogene <- character(0)
+regulatory_region <- character(0)
+unknown <- character(0)
+
+# Loop through each row
+for (i in seq_len(nrow(s))) {
+  # Remove brackets and split by comma
+  categories <- gsub("\\[|\\]", "", smoker$Category[i])
+  categories <- strsplit(categories, ",")[[1]]
+  # Clean up quotes and spaces
+  categories <- gsub("^\\s+|\\s+$|'", "", categories)
+  
+  if ("Immunomodulatory gene" %in% categories) {
+    count_immunomodulatory_gene <- count_immunomodulatory_gene + 1
+    immunomodulatory_gene <- c(immunomodulatory_gene, smoker$Feature_ID[i])
+  }
+  if ("Other gene" %in% categories) {
+    count_other_gene <- count_other_gene + 1
+    other_gene <- c(other_gene, smoker$Feature_ID[i])
+  }
+  if ("Oncogene" %in% categories) {
+    count_oncogene <- count_oncogene + 1
+    oncogene <- c(oncogene, smoker$Feature_ID[i])
+  }
+  if ("Regulatory region" %in% categories) {
+    count_regulatory_region <- count_regulatory_region + 1
+    regulatory_region <- c(regulatory_region, smoker$Feature_ID[i])
+  }
+  if (!any(categories %in% target_categories)) {
+  count_unknown <- count_unknown + 1
+  unknown <- c(unknown, smoker$Feature_ID[i])
+  }
+}
+
+# Display counts
+cat("Counts of Feature_IDs by Category:\n")
+cat("Immunomodulatory Gene:", count_immunomodulatory_gene, "\n")
+cat("Other Gene:", count_other_gene, "\n")
+cat("Oncogene:", count_oncogene, "\n")
+cat("Regulatory Region:", count_regulatory_region, "\n")
+cat("Unknown:", count_unknown, "\n")
+
+# For smoker plot
+sets <- list(
+  "Oncogenes (COSMIC)" = oncogene,
+  "Immunomodulatory Genes" = immunomodulatory_gene,
+  "Promoter or Enhancer Region" = regulatory_region,
+  "Other Genes" = other_gene,
+  "No known genetic element" = unknown
+)
+
+set.data <- fromList(sets)
+
+smoker_plot <- upset(set.data, 
+            sets = rev(c("Immunomodulatory Genes", "Oncogenes (COSMIC)", "Promoter or Enhancer Region", "Other Genes", "No known genetic element")),
+            keep.order = TRUE,
+            sets.bar.color = "black",
+            main.bar.color = "red",
+            matrix.color = "darkred",
+            mainbar.y.label = "# of ecDNAs",
+            sets.x.label = "# of ecDNAs",
+            order.by = "freq")
+
+print(nonsmoker_plot)
+print(smoker_plot)
+
+```
+
+
+```{r}
+
+```
+
+
+
+
+```{r SUPPLEMENTARY FIGURE 7C -- ecDNA Genomic Content & Copy Number}
+
+library(ggplot2)
+library(ggpubr)  # For stat_compare_means
+library(rstatix) # For pairwise comparisons
+
+sl <- read.csv("..data/ecDNA_amplicon_table_content.tsv", sep="\t", header=TRUE)
+#keep only Samples column and Category column
+
+sl$Category2[sl$Category2 == "Oncogene and immunomodulatory (same ecDNA)"] <- "Oncogene and immunomodulatory\n (same ecDNA)"
+
+
+# Define the order you want for your categories
+category_order <- c("Oncogene and immunomodulatory\n (same ecDNA)", "Oncogene-containing ecDNA", "Immunomodulatory ecDNA", "Other ecDNA") # Replace with your actual categories
+
+sl$Category2 <- factor(sl$Category2, levels = category_order)
+
+
+# Create log-transformed column
+sl$log2_copy_number <- log2(pmax(sl$Feature_median_copy_number, 0.1))
+
+#sl$log2_copy_number <- log2(pmax(sl$Feature_median_copy_number / sl$Tumor_Purity, 0.1))
+
+ns <- sl %>%
+  filter(Smoking == "Non-Smoker") 
+
+s <- sl %>%
+  filter(Smoking == "Smoker") 
+
+# Calculate all pairwise comparisons
+pwc <- ns %>%
+  pairwise_wilcox_test(
+    log2_copy_number ~ Category2,
+    p.adjust.method = "fdr"
+  ) %>%
+  filter(p.adj < 0.05) # Keep only significant comparisons
+
+# If there are significant comparisons, prepare them for plotting
+if(nrow(pwc) > 0) {
+  # Create comparison list from significant results
+  sig_comparisons <- lapply(1:nrow(pwc), function(i) {
+    c(pwc$group1[i], pwc$group2[i])
+  })
+  
+  # Create custom p-value labels with actual values
+  pwc$p.adj.label <- ifelse(
+    pwc$p.adj < 0.001, "***",
+    ifelse(pwc$p.adj < 0.01, "**",
+    ifelse(pwc$p.adj < 0.05, "*", "ns"))
+  )
+  
+  # Combine p-value and its label
+  pwc$p.label <- paste(
+    pwc$p.adj.label, 
+    " p=", sprintf("%.4f", pwc$p.adj), 
+    sep = ""
+  )
+  
+  # Create plot with significant comparisons only
+  nonsmoker_plot <- ggplot(ns, aes(x = Category2, y = log2_copy_number, fill = Category2)) +
+    geom_violin(trim = FALSE, alpha = 0.5) +
+    geom_boxplot(width = 0.2, fill = "white", alpha = 0.7) +
+    theme_minimal() +
+    labs(
+      x = "",
+      y = "Log2(Median copy number)"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    ) +
+    scale_fill_brewer(palette = "Set2")
+  
+  # Add stat_compare_means only for significant comparisons
+  if(length(sig_comparisons) > 0) {
+    nonsmoker_plot <- nonsmoker_plot + stat_compare_means(
+      comparisons = sig_comparisons,
+      method = "wilcox.test", 
+      label = "p.format"
+    )
+  }
+} else {
+  # If no significant comparisons, create plot without comparison lines
+  nonsmoker_plot <- ggplot(ns, aes(x = Category2, y = log2_copy_number, fill = Category2)) +
+    geom_violin(trim = FALSE, alpha = 0.5) +
+    geom_boxplot(width = 0.2, fill = "white", alpha = 0.7) +
+    theme_minimal() +
+    labs(
+      x = "",
+      y = "Log2(Median copy number)"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    ) +
+    scale_fill_brewer(palette = "Set2")
+}
+
+#SMOKERS
+
+# Calculate all pairwise comparisons
+pwc <- s %>%
+  pairwise_wilcox_test(
+    log2_copy_number ~ Category2,
+    p.adjust.method = "fdr"
+  ) %>%
+  filter(p.adj < 0.05) # Keep only significant comparisons
+
+# If there are significant comparisons, prepare them for plotting
+if(nrow(pwc) > 0) {
+  # Create comparison list from significant results
+  sig_comparisons <- lapply(1:nrow(pwc), function(i) {
+    c(pwc$group1[i], pwc$group2[i])
+  })
+  
+  # Create custom p-value labels with actual values
+  pwc$p.adj.label <- ifelse(
+    pwc$p.adj < 0.001, "***",
+    ifelse(pwc$p.adj < 0.01, "**",
+    ifelse(pwc$p.adj < 0.05, "*", "ns"))
+  )
+  
+  # Combine p-value and its label
+  pwc$p.label <- paste(
+    pwc$p.adj.label, 
+    " p=", sprintf("%.4f", pwc$p.adj), 
+    sep = ""
+  )
+  
+  # Create plot with significant comparisons only
+  smoker_plot <- ggplot(s, aes(x = Category2, y = log2_copy_number, fill = Category2)) +
+    geom_violin(trim = FALSE, alpha = 0.5) +
+    geom_boxplot(width = 0.2, fill = "white", alpha = 0.7) +
+    theme_minimal() +
+    labs(
+      x = "",
+      y = "Log2(Median copy number)"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    ) +
+    scale_fill_brewer(palette = "Set2")
+  
+  # Add stat_compare_means only for significant comparisons
+  if(length(sig_comparisons) > 0) {
+    smoker_plot <- smoker_plot + stat_compare_means(
+      comparisons = sig_comparisons,
+      method = "wilcox.test", 
+      label = "p.format"
+    )
+  }
+}
+
+print(nonsmoker_plot)
+print(smoker_plot)
+```
+
+
+```{r SUPP FIGURE 8B -- Default vs Rescaled pipeline boxplot of tumor purity}
+#make a boxplot using ggstats of ecDNA+ vs ecDNA- and tumor purity 
+library(ggplot2)
+library(ggpubr)
+library(ggstatsplot)
+library(ggplotify)
+library(grid)
+library(gridExtra)
+
+data <- read.csv("..data/log-reg-table5.tsv", sep = '\t', header=TRUE)
+#change all 1 to ecDNA+ and 0 to ecDNA- in default_ecDNA column
+data$default_ecDNA = ifelse(data$default_ecDNA == 1, "ecDNA+", "ecDNA-")
+
+
+#Calculate p-value using t-test (use wilcox.test if data is non-normal)
+# Check normality with Shapiro-Wilk test or visually if needed
+# For large datasets, t-test is robust, so we'll proceed with it
+p_val <- wilcox.test(Tumor_Purity ~ ecDNA., data = data)$p.value
+
+# Format p-value in scientific notation if very small
+if (p_val < 0.001) {
+  p_label <- sprintf("P = %.1e", p_val)
+} else {
+  p_label <- sprintf("P = %.2f", p_val)
+}
+
+# Create the boxplot
+rescaled <- ggplot(data, aes(x = ecDNA., y = Tumor_Purity)) +
+  # Boxplot with black outline, no fill
+  geom_boxplot(width = 0.4, 
+               fill = NA, 
+               color = "black", 
+               outlier.shape = NA, # Outliers will be shown as jitter points
+               size = 0.8) +
+  geom_jitter(aes(color = ecDNA., fill = NA), 
+              width = 0.2, 
+              alpha = 0.2, 
+              size = 1.5,
+              shape = 21,  # This shape allows separate control of outline and fill
+              stroke = 1)  +  # Control outline thickness
+  # Define colors: 0 (ecDNA-) as gray and 1 (ecDNA+) as red
+  scale_color_manual(values = c("ecDNA-" = "gray50", "ecDNA+" = "red")) +
+  # Labels
+  labs(title = "Rescaled Pipeline",
+       x = "ecDNA Status",
+       y = "Tumor Purity") +
+  # Add significance bar and p-value
+  annotate("segment", 
+           x = 1, xend = 2, 
+           y = 0.95, yend = 0.95, 
+           color = "black", size = 0.5) +
+  annotate("segment", 
+           x = 1, xend = 1, 
+           y = 0.95, yend = 0.92, 
+           color = "black", size = 0.5) +
+  annotate("segment", 
+           x = 2, xend = 2, 
+           y = 0.95, yend = 0.92, 
+           color = "black", size = 0.5) +
+  annotate("text", 
+           x = 1.5, y = 0.98, 
+           label = p_label, 
+           size = 4, 
+           color = "black") +
+    scale_x_discrete(labels = c(
+    "ecDNA-" = paste0("ecDNA-\nn=", sum(data$ecDNA. == "ecDNA-", na.rm = TRUE)),
+    "ecDNA+" = paste0("ecDNA+\nn=", sum(data$ecDNA. == "ecDNA+", na.rm = TRUE))
+  )) + 
+  # Theme for publication quality
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 11, face = "bold"),
+    axis.text = element_text(size = 10, color = "black"),
+    legend.position = "none", # Remove legend
+    panel.grid.major = element_blank(), # Remove major grid lines
+    panel.grid.minor = element_blank(), # Remove minor grid lines
+    plot.margin = margin(10, 10, 10, 10) # Adjust margins
+  )
+
+# Display plot
+print(rescaled)
+
+#Calculate p-value using t-test (use wilcox.test if data is non-normal)
+p_val <- wilcox.test(Tumor_Purity ~ default_ecDNA, data = data)$p.value
+
+# Format p-value in scientific notation if very small
+if (p_val < 0.001) {
+  p_label <- sprintf("P = %.1e", p_val)
+} else {
+  p_label <- sprintf("P = %.2f", p_val)
+}
+
+# Create the boxplot
+default <- ggplot(data, aes(x = default_ecDNA, y = Tumor_Purity)) +
+  # Boxplot with black outline, no fill
+  geom_boxplot(width = 0.4, 
+               fill = NA, 
+               color = "black", 
+               outlier.shape = NA, # Outliers will be shown as jitter points
+               size = 0.8) +
+  geom_jitter(aes(color = default_ecDNA, fill = NA), 
+              width = 0.2, 
+              alpha = 0.2, 
+              size = 1.5,
+              shape = 21,  # This shape allows separate control of outline and fill
+              stroke = 1)  +  # Control outline thickness
+  # Define colors: 0 (ecDNA-) as gray and 1 (ecDNA+) as red
+  scale_color_manual(values = c("ecDNA-" = "gray50", "ecDNA+" = "red")) +
+  # Labels
+  labs(title = "Default Pipeline",
+       x = "ecDNA Status",
+       y = "Tumor Purity") +
+  # Add significance bar and p-value
+  annotate("segment", 
+           x = 1, xend = 2, 
+           y = 0.95, yend = 0.95, 
+           color = "black", size = 0.5) +
+  annotate("segment", 
+           x = 1, xend = 1, 
+           y = 0.95, yend = 0.92, 
+           color = "black", size = 0.5) +
+  annotate("segment", 
+           x = 2, xend = 2, 
+           y = 0.95, yend = 0.92, 
+           color = "black", size = 0.5) +
+  annotate("text", 
+           x = 1.5, y = 0.98, 
+           label = p_label, 
+           size = 4, 
+           color = "black") +
+   # Replace the x-axis labels with labels that include sample size
+  scale_x_discrete(labels = c(
+    "ecDNA-" = paste0("ecDNA-\nn=", sum(data$default_ecDNA == "ecDNA-", na.rm = TRUE)),
+    "ecDNA+" = paste0("ecDNA+\nn=", sum(data$default_ecDNA == "ecDNA+", na.rm = TRUE))
+  )) +
+  # Theme for publication quality
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+    axis.title = element_text(size = 11, face = "bold"),
+    axis.text = element_text(size = 10, color = "black"),
+    legend.position = "none", # Remove legend
+    panel.grid.major = element_blank(), # Remove major grid lines
+    panel.grid.minor = element_blank(), # Remove minor grid lines
+    plot.margin = margin(10, 10, 10, 10) # Adjust margins
+  )
+
+
+#now combine plots side by side
+combined_patchwork <- default + rescaled + 
+  plot_layout(ncol = 2) +
+  plot_annotation(title = "",
+                  theme = theme(plot.title = element_text(size = 12, face = "bold", hjust = 0.5)))
+```
+
+
+
+```{r SUPP FIGURE 8B -- Purity vs ecDNA prevalence}
+
+# Load required package
+library(ggplot2)
+
+# Create sequence of purity cutoffs from 0 to 0.9 with 0.1 increments
+cutoffs <- seq(0, 0.9, by = 0.1)  # Changed from 0 to 1 to 0 to 0.9
+
+# Calculate prevalence and sample sizes for each cutoff
+results <- sapply(cutoffs, function(cutoff) {
+  # Filter data to keep samples >= cutoff
+  filtered_data <- data[data$Tumor_Purity >= cutoff, ]
+  
+  # Get sample size
+  n <- nrow(filtered_data)
+  
+  # Calculate prevalence
+  if(n == 0) {
+    prev <- NA
+  } else {
+    prev <- sum(filtered_data$ecDNA_status == 1) / n
+  }
+  
+  # Return both prevalence and sample size
+  c(prevalence = prev, n = n)
+})
+
+
+plot_data <- data.frame(
+  Cutoff = cutoffs,
+  Prevalence = results["prevalence", ],
+  N = results["n", ]
+)
+
+# Create custom labels: replace ≥0 with "No cutoff"
+x_labels <- paste("≥", seq(0, 0.9, by = 0.1))  # Adjusted to 0.9
+x_labels[1] <- "No cutoff"  # Replace first label
+
+plot <- ggplot(plot_data, aes(x = Cutoff, y = Prevalence)) +
+  geom_bar(stat = "identity", fill = "red") +
+  # Add text labels above bars with n=
+  geom_text(aes(label = paste("n=", N)), vjust = -0.5, size = 3) +
+  labs(
+    x = "Tumor Purity Cutoff",
+    y = "ecDNA Prevalence",
+    title = "ecDNA Prevalence vs Tumor Purity Cutoff (n=1216)"
+  ) +
+  # Use custom x-axis labels, stopping at ≥0.9
+  scale_x_continuous(
+    breaks = seq(0, 0.9, by = 0.1),
+    labels = x_labels
+  ) +
+  scale_y_continuous(breaks = seq(0, 1, by = 0.2), limits = c(0, 1)) +
+  theme_minimal()
+
+
+print(plot)
+```
+
+
+
+
+
+```{r SUPPLEMENTARY FIGURE 8C -- EGFR EXPRESSION}
+
+matrix <- read.table("..data/Sherlock_EAGLE_RNAseq_tumor_only_matrix4.tsv", sep="\t", header=TRUE)
+EGFR_data <- matrix[, c("Tumor_Barcode", "EGFR")]
+
+
+data <- read.csv("..data/log-reg-table5.tsv", sep="\t", header=TRUE)
+#select the ecDNA column
+data <- data[, c("Tumor_Barcode", "EGFR_class")]
+merged_data <- merge(EGFR_data, data, by.x = "Tumor_Barcode", by.y = "Tumor_Barcode", all.x = TRUE)
+
+#drop rows with ecDNA_status == NA
+merged_data <- merged_data[!is.na(merged_data$EGFR_class), ]
+
+merged_data$EGFR_class[merged_data$EGFR_class == "No EGFR amp"] <- "EGFR-non-ecDNA"
+
+p <- ggplot(merged_data, aes(x = "EGFR Gene", y = EGFR, color = factor(EGFR_class))) +
+  geom_jitter(width = 0.2, alpha = 0.8, size = 1.5) +
+  ylab("EGFR log2CPM") +
+  xlab("") +
+  theme_minimal(base_size = 12) +
+  theme(
+    # Legend settings
+    legend.position = c(0.8, 0.1),
+    legend.title = element_text(size = 7, face = "bold"),
+    legend.text = element_text(size = 6),
+    legend.key.size = unit(0.6, "lines"),
+    legend.margin = margin(t = 1, r = 1, b = 1, l = 1),
+    legend.spacing.y = unit(0.1, "cm"),
+    legend.background = element_rect(fill = "white", color = NA, linewidth = 0.2),
+    
+    # Other elements
+    plot.title = element_text(size = 13, face = "bold", hjust = 0.5),
+    axis.title.y = element_text(face = "bold", size = 11),
+    axis.title.x = element_text(face = "bold", size = 11),
+    axis.text = element_text(size = 10),
+    panel.grid.minor = element_blank(),
+    panel.border = element_rect(fill = NA, color = "black", linewidth = 0.5),
+    plot.margin = margin(t = 5, r = 50, b = 15, l = 5, unit = "pt") # Extended right margin
+  ) +
+  scale_color_manual(
+    values = c("EGFR-ecDNA" = "red", "EGFR-non-ecDNA" = "gray60"),
+    name = "EGFR Classification"
+  )
+
+# Fix labels to extend horizontally to the right
+p <- p + geom_text_repel(
+  data = subset(merged_data, EGFR_class == "EGFR-ecDNA"),
+  aes(label = Tumor_Barcode),
+  size = 2.5,
+  color = "red",
+  segment.color = "black",
+  segment.size = 0.3,
+  box.padding = 0,           # Reduced padding
+  point.padding = 0.1,       # Smaller padding around points
+  min.segment.length = 0,    # Allow all segment lengths
+  nudge_x = 0.5,             # Push labels far to the right
+  force = 0,                 # No force to avoid repulsion
+  direction = "y",           # Keep labels at same vertical position as points
+  hjust = 0,                 # Left-align text
+  xlim = c(NA, Inf),         # Allow labels to extend beyond plot area
+  segment.angle = 0,         # Force horizontal segments
+  segment.curvature = 0,     # Use straight lines
+  segment.ncp = 1,           # No control points (straight)
+  segment.shape = 0.5        # Shape parameter for segments
+)
+
+# Expand the plot width to accommodate the labels
+p <- p + coord_cartesian(clip = "off")
+# Print the plot
+print(p)
+#pull out the EGFR-ecDNA only 
+EGFR_ecDNA <- merged_data[merged_data$EGFR_class == "EGFR-ecDNA", ]
+```
+
