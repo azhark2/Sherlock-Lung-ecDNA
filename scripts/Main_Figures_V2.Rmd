@@ -2311,8 +2311,26 @@ print(combined_plot)
 
 ```{r FIGURE 2E -- SURVIVAL ANALYSIS}
 
-setwd("/Users/azhark/iCloud/dev/Sherlock-Lung-ecDNA-backup/scripts")
+#derive amplfication classes for survival analysis using AA ecDNA calls and Battenberg CN calls
+bb_dir <- "../data/Battenberg_CN"
+
+files   <- list.files(bb_dir, pattern = "\\.bed$", full.names = TRUE)
+samples <- tools::file_path_sans_ext(basename(files))
+
+classify <- function(f) {
+  df <- read.table(f, header = TRUE, sep = "\t", check.names = FALSE)
+  if (any((as.integer(df$clone_nMaj) + as.integer(df$clone_nMin)) >= 4, na.rm = TRUE)) "chrAmp" else "No amp"
+}
+
+res <- data.frame(Sample = samples,
+                  Classification2 = vapply(files, classify, character(1)),
+                  stringsAsFactors = FALSE)
+
+
 s <- read.csv("../data/log-reg-table5.tsv", sep="\t", header=TRUE)
+
+#merge with res by Tumor_Barcode and Sample
+#s <- merge(s, res, by.x="Tumor_Barcode", by.y="Sample", all.x=TRUE)
 
 
 #replace all MDM2-non-ecDNA with MDM2-chrAmp in the MDM2_class column 
@@ -2327,7 +2345,6 @@ s$ecDNAClass2[s$ecDNAClass2 == "Multi-chromosome"] <- "Complex"
 #replace all occurrences of "Amp not on ecDNA" with "ChromosomalAmp"
 s$Classification2[s$Classification2 == "ChromosomalAmp"] <- "chrAmp"
 s$Classification2 <- factor(s$Classification2, levels = c('No amp', 'chrAmp', "ecDNA"))
-
 
 
 #drop smoking is unknown and stage4 is NA
