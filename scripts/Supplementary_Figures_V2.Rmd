@@ -3469,14 +3469,6 @@ s <- ggplot(smokers, aes(x = ecDNA., y = Telseq_TL_Ratio)) +
 #combine plots
 combined_plot <- ns + s + plot_layout(ncol = 2) + plot_annotation(tag_levels = 'a')
 
-
-
-
-
-
-
-
-
 ```
 
 

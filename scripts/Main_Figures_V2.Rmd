@@ -42,7 +42,8 @@ library(survival)
 library(survminer)
 
 #change directory 
-setwd("~/iCloud/dev/Sherlock-Lung-ecDNA-backup/scripts")
+PATH_TO_DATA_FOLDER = "~/iCloud/dev/Sherlock-Lung-ecDNA-backup/data/" #change this to point to path of data folder
+PATH_TO_METADATA_FOLDER = "~/iCloud/dev/Sherlock-Lung-ecDNA-backup/metadata/" #change this to point to path of metadata folder
 ```
 
 
@@ -266,7 +267,6 @@ print(smokers)
 
 ```{r FIGURE 1C -- ALL 1216 SAMPLES WITH EPI VARIABLES INCLUDING SMOKING}
 
-setwd("/Users/azhark/iCloud/dev/Sherlock-Lung-ecDNA-backup/scripts")
 
 tidy_logistf <- function(model, conf.level = 0.95) {
   est <- coef(model)
@@ -464,7 +464,6 @@ nonsmoking_forest <- ggplot(final_result, aes(x = log2(Odds), y = Features)) +
 
 
 
-
 ```{r FIGURE 1D -- ONE VS ALL COUNTRY COMPARISON VOLCANO}
 library(logistf)
 
@@ -604,9 +603,9 @@ all_samples <- ggplot(results_summary, aes(log_or, -log10(fdr))) +
 
 
 
-```{r FIGURE 1E -- NON-SMOKERS EPI PLOT W/ ALL VARIABLES INCLUDED}
+```{r FIGURE 1E -- NON-SMOKERS AND SMOKERS EPI PLOT W/ ALL VARIABLES INCLUDED}
 
-setwd("/Users/azhark/iCloud/dev/Sherlock-Lung-ecDNA-backup/scripts")
+#setwd("~/iCloud/dev/Sherlock-Lung-ecDNA-backup/scripts")
 
 tidy_logistf <- function(model, conf.level = 0.95) {
   est <- coef(model)
@@ -635,13 +634,17 @@ tidy_logistf <- function(model, conf.level = 0.95) {
   )
 }
 
-data <- read.csv("../data/log-reg-table5.tsv", sep="\t")
+#log-reg-table5.tsv
+
+data <- read.delim(file.path(PATH_TO_DATA_FOLDER, "log-reg-table5.tsv"),
+                       header = TRUE, check.names = FALSE)
 data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis)
 
 #change all 1 to ecDNA+ and 0 to ecDNA- in default_ecDNA column
 #data$default_ecDNA = ifelse(data$default_ecDNA == 1, "ecDNA+", "ecDNA-")
 
-metadata = read.csv("../data/sherlock_1217_metadata_updated.tsv", sep = '\t', header=TRUE)
+metadata <- read.delim(file.path(PATH_TO_DATA_FOLDER, "sherlock_1217_metadata_updated.tsv"),
+                       header = TRUE, check.names = FALSE)
 
 merged <- merge(data, metadata, by = "Tumor_Barcode")
 
@@ -802,10 +805,13 @@ nonsmoking_forest <- ggplot(final_result, aes(x = log2(Odds), y = Features)) +
 
 
 #NOW SMOKERS ONLY
-data <- read.csv("../data/log-reg-table5.tsv", sep="\t")
+data <- read.delim(file.path(PATH_TO_DATA_FOLDER, "log-reg-table5.tsv"),
+                       header = TRUE, check.names = FALSE)
+
 data <- data %>% dplyr::select(Tumor_Barcode, ecDNA_status, Stage3, purity, Recurrence, Metastasis)
 
-metadata = read.csv("../data/sherlock_1217_metadata_updated.tsv", sep = '\t', header=TRUE)
+metadata <- read.delim(file.path(PATH_TO_DATA_FOLDER, "sherlock_1217_metadata_updated.tsv"),
+                       header = TRUE, check.names = FALSE)
 
 merged <- merge(data, metadata, by = "Tumor_Barcode", all.y=TRUE)
 
@@ -1708,7 +1714,6 @@ combined_plot <- grid.arrange(
 
 ```{r FIGURE 2C -- DRIVER MUTATIONS}
 
-setwd("~/iCloud/dev/Sherlock-Lung-ecDNA-backup/scripts")
 data = read.csv("../data/sherlock_driver_mutations.tsv", sep="\t", header=TRUE)
 
 library(tidyverse)
@@ -2124,21 +2129,26 @@ combined_plot <- grid.arrange(
 
 ```{r FIGURE 2D -- ecDNA GENOMIC CONTENT BETWEEN NEVER-SMOKERS and SMOKERS}
 
-setwd("/Users/azhark/iCloud/dev/Sherlock-Lung-ecDNA-backup/scripts")
 
-s <- read.csv("../data/ecDNA_amplicon_table_content.tsv", sep = '\t', header=TRUE)
-metadata <- read.csv("../data/sherlock_1217_metadata_updated.tsv", sep = '\t', header=TRUE)
+s <- read.delim(file.path(PATH_TO_DATA_FOLDER, "ecDNA_amplicon_table_content.tsv"),
+                       header = TRUE)
+
+metadata <- read.delim(file.path(PATH_TO_METADATA_FOLDER, "sherlock_1217_metadata.tsv"),
+                       header = TRUE)
+
 metadata <- metadata[,c("Tumor_Barcode","Smoking")]
 s <- merge(s, metadata, by="Tumor_Barcode", all.x=TRUE)
 
 s$Smoking <- s$Smoking.x
-
 
 # Define the categories we want to check
 categories <- c('Oncogene', 'Other gene', 'Immunomodulatory gene', 'Regulatory region')
 
 genes_to_remove <- c("MDM2", "MYC", "NKX2-1")
 #genes_to_remove <- c("MDM2")
+
+nonsmoker <- s[s$Smoking == "Non-Smoker",]
+smoker <- s[s$Smoking == "Smoker",]
 
 
 # Function to check if any genes_to_remove are in the All_genes string
@@ -2309,48 +2319,52 @@ print(combined_plot)
 ```
 
 
+
+
+
 ```{r FIGURE 2E -- SURVIVAL ANALYSIS}
 
+PATH_TO_DATA_FOLDER="/Users/akhandek/iCloud/dev/Sherlock-Lung-ecDNA-backup/data"
 #derive amplfication classes for survival analysis using AA ecDNA calls and Battenberg CN calls
-bb_dir <- "../data/Battenberg_CN"
+s <- read.delim(file.path(PATH_TO_DATA_FOLDER, "log-reg-table5.tsv"),
+                header = TRUE, check.names = FALSE)
+
+bb_dir <- file.path(PATH_TO_DATA_FOLDER, "Battenberg_CN")
 
 files   <- list.files(bb_dir, pattern = "\\.bed$", full.names = TRUE)
 samples <- tools::file_path_sans_ext(basename(files))
 
-classify <- function(f) {
-  df <- read.table(f, header = TRUE, sep = "\t", check.names = FALSE)
-  if (any((as.integer(df$clone_nMaj) + as.integer(df$clone_nMin)) >= 4, na.rm = TRUE)) "chrAmp" else "No amp"
+amp_class <- character(length(files))
+
+for (i in seq_along(files)) {
+  df <- read.table(files[i], header = TRUE, sep = "\t", check.names = FALSE, comment.char = "")
+  
+  total_cn <- df[["clone_nMaj"]] + df[["clone_nMin"]]
+  length <- df[["endpos"]] - df[["startpos"]]
+  
+  if (any(total_cn >= 3, na.rm = TRUE) ) {
+    amp_class[i] <- "chrAmp"
+  } else {
+    amp_class[i] <- "No amp"
+  }
 }
 
-res <- data.frame(Sample = samples,
-                  Classification2 = vapply(files, classify, character(1)),
-                  stringsAsFactors = FALSE)
+res <- data.frame(Sample = samples, AmpClass = amp_class, stringsAsFactors = FALSE)
 
 
-s <- read.csv("../data/log-reg-table5.tsv", sep="\t", header=TRUE)
 
 #merge with res by Tumor_Barcode and Sample
-#s <- merge(s, res, by.x="Tumor_Barcode", by.y="Sample", all.x=TRUE)
+s <- merge(s, res, by.x="Tumor_Barcode", by.y="Sample", all.x=TRUE)
 
 
-#replace all MDM2-non-ecDNA with MDM2-chrAmp in the MDM2_class column 
-s$MDM2_class[s$MDM2_class == "MDM2-non-ecDNA"] <- "MDM2-chrAmp"
+#if ecDNA_status == 1, then change Classification2 to "ecDNA"
+s$Classification2 <- ifelse(s$ecDNA_status == 1, "ecDNA", s$AmpClass)
 
-s$MDM2_class <- factor(s$MDM2_class, levels = c('No MDM2 amp', "MDM2-chrAmp", 'MDM2-ecDNA'))
-
-#make a new column, ecDNA.class2, that combines the "Complex" and "Multi-chromosome" classes into one, "Complex"
-s$ecDNAClass2 <- s$ecDNA.class
-s$ecDNAClass2[s$ecDNAClass2 == "Multi-chromosome"] <- "Complex"
-
-#replace all occurrences of "Amp not on ecDNA" with "ChromosomalAmp"
-s$Classification2[s$Classification2 == "ChromosomalAmp"] <- "chrAmp"
-s$Classification2 <- factor(s$Classification2, levels = c('No amp', 'chrAmp', "ecDNA"))
-
+s$Classification2 <- factor(s$Classification2, levels = c('chrAmp', 'No amp', "ecDNA"))
 
 #drop smoking is unknown and stage4 is NA
 s <- s %>%
   dplyr::filter(!Smoking %in% c("Unknown", "unknown") & !is.na(Stage_group))
-
 
 #create an early stage (I) and late stage column
 s$Stage_class <- ifelse(s$Stage4 == "I", "Early-stage (I)", "Late-stage (II-IV)")
@@ -2392,7 +2406,7 @@ s$ecDNA.class <- ifelse(s$ecDNA.class == "Multi-chromosome", "Multi-\nchromosome
 
 s$ecDNA.class <- factor(s$ecDNA.class, levels = c('None', 'Simple', 'Complex', "Multi-\nchromosome"))
 
-create_survival_plot <- function(data, time_col, status_col, grouping_var, highlight_level, title, xlim, smoking = NULL, highlight_level2 = NULL) {
+create_survival_plot <- function(data, time_col, status_col, grouping_var, highlight_level, title, xlim, highlight_level2 = NULL) {
   # Ensure that the grouping variable is a factor with correct levels
   data[[grouping_var]] <- factor(data[[grouping_var]])
   
@@ -2404,18 +2418,20 @@ create_survival_plot <- function(data, time_col, status_col, grouping_var, highl
     stop(paste0("The highlight level '", highlight_level, "' is not present in the grouping variable levels."))
   }
   
-  
-  if (!is.null(smoking)) {
-    # Create the adjusted Cox model with Smoking as a covariate
-    cox_formula <- as.formula(paste("Surv(", time_col, ",", status_col, ") ~", 
-                                    grouping_var, 
-                                    "+ Gender + Age + Population + Stage_group + Histology + wGII + Smoking "))
-  } else {
-    # Create the adjusted Cox model without Smoking
-    cox_formula <- as.formula(paste("Surv(", time_col, ",", status_col, ") ~", 
+   cox_formula <- as.formula(paste("Surv(", time_col, ",", status_col, ") ~", 
                                     grouping_var, 
                                     "+ Gender + Age + Population + Stage_group + Histology + wGII"))
-  }
+  # if (!is.null(smoking)) {
+  #   # Create the adjusted Cox model with Smoking as a covariate
+  #   cox_formula <- as.formula(paste("Surv(", time_col, ",", status_col, ") ~", 
+  #                                   grouping_var, 
+  #                                   "+ Gender + Age + Population + Stage_group + Histology + wGII + Smoking "))
+  # } else {
+  #   # Create the adjusted Cox model without Smoking
+  #   cox_formula <- as.formula(paste("Surv(", time_col, ",", status_col, ") ~", 
+  #                                   grouping_var, 
+  #                                   "+ Gender + Age + Population + Stage_group + Histology + wGII"))
+  # }
   
   s$Classification2 <- relevel(s$Classification2, ref = "chrAmp")
   cox_model <- coxph(cox_formula, data = data)
@@ -2436,7 +2452,7 @@ create_survival_plot <- function(data, time_col, status_col, grouping_var, highl
     
     
     annotation <- sprintf(
-      "Cox P = %.4f\nCox HR = %.2f (95%% CI: %.2f-%.2f)",
+      "Cox P = %.2f\nCox HR = %.2f (95%% CI: %.2f-%.2f)",
       p_value, hr, ci_lower, ci_upper
     )
   } else {
@@ -2488,8 +2504,14 @@ create_survival_plot <- function(data, time_col, status_col, grouping_var, highl
   if (highlight_level %in% strata_names) {
     custom_palette[highlight_level] <- "red"  # Explicitly assign red to ecDNA+
   }
+
   
+  if (!is.null(highlight_level2) && highlight_level2 %in% strata_names) {
+    custom_palette[highlight_level2] <- "gray"  
+  }
   
+
+
   custom_palette <- c("gray", "blue", "red", "green", "black", "purple") 
                       
   survplot <- ggsurvplot(surv_fit(Surv(data[[time_col]], data[[status_col]]) ~ data[[grouping_var]], data = data), data = data, risk.table = FALSE, pval=FALSE, palette=custom_palette, legend.labs = legend_labels, short.panel.labs=TRUE, font.x=10, font.main=10, font.y=10, font.tickslab=10, xlab = "Time (Months)", legend = c("right"), font.legend = c(8,"plain", "black"))
@@ -2508,13 +2530,33 @@ create_survival_plot <- function(data, time_col, status_col, grouping_var, highl
   return(p)
 }
 
-smokers <- s[s$Smoking == "Smoker", ]
+#smokers <- s[s$Smoking == "Smoker", ]
 nonsmokers <- s[s$Smoking == "Non-Smoker", ]
 
+smokers <- read.delim(file.path(PATH_TO_DATA_FOLDER, "smokers_survival_table.tsv"),
+                       header = TRUE, check.names = FALSE)
 
-nonsmoker_plot <- create_survival_plot(nonsmokers, "Survival_Month_5yr", "Death_5yr", "Classification2", "ecDNA", "Survival by Classification", 60, "Smoking", highlight_level2 = "chrAmp")
+#remove NA from Classification2 column in smokers and "" 
+smokers <- smokers %>%
+  dplyr::filter(!is.na(Classification2) & Classification2 != "")
 
-smoker_plot <- create_survival_plot(smokers, "Survival_Month_5yr", "Death_5yr", "Classification2", "ecDNA", "Survival by Classification", 60, "Smoking", highlight_level2 = "chrAmp")
+#age as numeric
+smokers$Age <- as.numeric(smokers$Age)
+
+smokers$Classification2 <- factor(smokers$Classification2, levels = c('chrAmp', 'No amp', "ecDNA"))
+smokers$Population <- factor(smokers$Population, levels = c('EAS', 'EUR', 'Other'))
+smokers$Histology <- factor(smokers$Histology, levels = c('Adenocarcinoma', "Squamous cell carcinoma", "Carcinoid tumor", "Other"))
+smokers$Gender <- factor(smokers$Gender, levels = c('Male', 'Female'))
+smokers$Stage_group <- factor(smokers$Stage_group, levels = c('I', 'II', 'III', 'IV'))
+
+#subset for only Gender + Age + Population + Stage_group + Histology + wGII columns in smokers
+smokers <- smokers %>%
+  dplyr::select(Tumor_Barcode, Gender, Survival_Month_5yr, Death_5yr, Classification2, Age, Population, Stage_group, Histology, wGII)
+
+
+nonsmoker_plot <- create_survival_plot(nonsmokers, "Survival_Month_5yr", "Death_5yr", "Classification2", "ecDNA", "Survival by Classification", 60, highlight_level2 = "No amp")
+
+smoker_plot <- create_survival_plot(smokers, "Survival_Month_5yr", "Death_5yr", "Classification2", "ecDNA", "Survival by Classification", 60, highlight_level2 = "No amp")
 
 ```
 
