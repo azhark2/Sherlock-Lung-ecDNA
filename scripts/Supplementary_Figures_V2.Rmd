@@ -3164,11 +3164,11 @@ tl <- tl[, -ncol(tl)]
 data <- merge(data, tl, by.x = "Tumor_Barcode", by.y = "Tumor_Barcode", all.x = TRUE)
 
 #add additional columns for above/below median for telomerecat and telhunter
-# data <- data %>%
-#   mutate(
-#     telhunter = ifelse(telhunter_TL >= median(telhunter_TL, na.rm=TRUE), 1, 0),
-#     telomerecat = ifelse(telomerecat_TL >= median(telomerecat_TL, na.rm=TRUE), 1, 0)
-#   )
+ # data <- data %>%
+ #   mutate(
+ #     telhunter = ifelse(telhunter  >= median(telhunter , na.rm=TRUE), 1, 0),
+ #     telomerecat = ifelse(telomerecat >= median(telomerecat, na.rm=TRUE), 1, 0)
+ #   )
 
 #remove all NA/NaN/Inf in telhunter and telomerecat
 data <- data %>%
@@ -3188,7 +3188,7 @@ features = c("telhunter", "telomerecat")
 features = c("telhunter")
 
 #non-smokers only
-data = data %>% filter(Smoking == "Smoker")
+data = data %>% filter(Smoking == "Non-Smoker")
 
 results_list <- list()
 # Iterate through each feature and perform logistic regression
@@ -3258,9 +3258,11 @@ results_summary <- results_summary %>%
 
 #remove intercept
 results_summary <- results_summary[results_summary$Features != "(Intercept)", ]
+label_colors <- ifelse(results_summary$Features == "Telhunter Telomere Length (log2 Ratio)", 
+                       "purple", "black")
 p <- ggplot(results_summary, aes(x = log2(Odds), y = Features)) +
-  geom_point(aes(color = ifelse(Odds > 3, "red", "black")), size = 3) +
-  geom_errorbarh(aes(xmin = log2(Lower.CI), xmax = log2(Upper.CI), color = ifelse(Odds > 3, "red", "black")), height = 0.2) +
+  geom_point(aes(color = ifelse(Corrected.p.value <= 0.02, "red", "black")), size = 3) +
+  geom_errorbarh(aes(xmin = log2(Lower.CI), xmax = log2(Upper.CI), color = ifelse(Corrected.p.value <= 0.02, "red", "black")), height = 0.2) +
   geom_text(aes(label = paste0("OR = ", Odds, ", q= ", formatC(Corrected.p.value, format = "e", digits = 2))), vjust = -0.7, nudge_y = 0.2, nudge_x = 0.25, size=3.2) +
   theme_minimal() +
   labs(
@@ -3270,7 +3272,7 @@ p <- ggplot(results_summary, aes(x = log2(Odds), y = Features)) +
   ) +
   theme(
     plot.title = element_text(hjust = 0.5, size = 10, face = "bold"),
-    axis.text.y = element_text(size = 10)
+    axis.text.y = element_text(size = 10, color = label_colors)
   ) +
   scale_color_identity() + xlim(-10, 10) + geom_vline(xintercept = 0, linetype = "dashed", color = "gray")
 
@@ -3291,7 +3293,7 @@ data$Gender = relevel(factor(data$Gender), ref = 'Female')
 data$Histology = relevel(factor(data$Histology), ref = 'Adenocarcinoma')
 
 feature <- "Telseq_TL_Ratio"
-formula <- paste("ecDNA_status ~", feature, "+ Gender + Tumor_Purity + Age + Ancestry + Histology")# + Histology")
+formula <- paste("ecDNA_status ~", feature, "+ Gender + Tumor_Purity + Age + Ancestry + Histology + wGII")# + Histology")
   
 # Fit the logistic regression model
 nonsmoker_model <- glm(formula, data = nonsmokers, family = binomial)
