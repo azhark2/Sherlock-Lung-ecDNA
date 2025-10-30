@@ -1,3 +1,6 @@
+This repository contains the code required to reproduce all the results of 'Examining the Role of Extrachromosomal DNA in 1,216 Lung Cancers'
+(https://www.biorxiv.org/content/10.1101/2025.06.03.657117v2).
+
 ## 🚀 Quick Start
 
 ### Prerequisites
@@ -25,6 +28,10 @@ new_packages <- required_packages[!(required_packages %in% installed.packages()[
 if(length(new_packages)) install.packages(new_packages)
 ```
 
+### Analysis Overview
+1. **Main_Figures.Rmd:** Main manuscript figures
+2. **Supplementary_Figures.Rmd:** Extended analyses and supplementary visualizations
+3. **Supplementary_Tables.Rmd:** Statistical tables and data
 
 
 **Data files are not included in this repository.** Set up this directory structure:
@@ -49,7 +56,4 @@ Contact the first author for data access (azhark@gmail.com)
 2. Open R/RStudio and set working directory to the repository root
 3. Run analysis scripts from the scripts/ directory
 
-### Analysis Overview
-1. **Main_Figures.Rmd:** Main manuscript figures
-2. **Supplementary_Figures.Rmd:** Extended analyses and supplementary visualizations
-3. **Supplementary_Tables.Rmd:** Statistical tables and data
+
